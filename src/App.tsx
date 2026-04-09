@@ -971,7 +971,7 @@ export default function App() {
   const [queuedNextLevel, setQueuedNextLevel] = useState<number | null>(null);
   const [isAdBreakVisible, setIsAdBreakVisible] = useState(false);
   const [authUser, setAuthUser] = useState<CloudUser | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudReady, setCloudReady] = useState(false);
@@ -1182,6 +1182,7 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
+    setAuthLoading(true);
     const safetyTimeout = window.setTimeout(() => {
       if (!active) return;
       setAuthLoading(false);
