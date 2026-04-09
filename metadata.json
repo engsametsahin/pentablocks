@@ -1,0 +1,5 @@
+{
+  "name": "Katamino Puzzle Challenge",
+  "description": "A challenging puzzle game where you must fit pentomino pieces into a rectangular grid within a time limit.",
+  "requestFramePermissions": []
+}
