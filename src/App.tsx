@@ -650,12 +650,14 @@ function MultiplayerScreen({
   defaultLevel,
   onBack,
   onPlayLevel,
+  onGuestBootstrap,
   onToast,
 }: {
   user: CloudUser | null;
   defaultLevel: number;
   onBack: () => void;
   onPlayLevel: (level: number) => void;
+  onGuestBootstrap: () => Promise<boolean>;
   onToast: (message: string, tone?: ToastTone) => void;
 }) {
   const [levelId, setLevelId] = useState(defaultLevel);
@@ -676,11 +678,20 @@ function MultiplayerScreen({
 
   const canUseMultiplayer = Boolean(user);
 
-  const handleCreate = async () => {
-    if (!canUseMultiplayer) {
+  const ensureMultiplayerAuth = async () => {
+    if (canUseMultiplayer) return true;
+    const ok = await onGuestBootstrap();
+    if (!ok) {
       setError('Please sign in first to use cloud multiplayer.');
-      return;
+      return false;
     }
+    onToast('Guest multiplayer session connected.', 'success');
+    return true;
+  };
+
+  const handleCreate = async () => {
+    const ready = await ensureMultiplayerAuth();
+    if (!ready) return;
     try {
       setLoading(true);
       setError(null);
@@ -698,10 +709,8 @@ function MultiplayerScreen({
 
   const handleJoin = async () => {
     const code = sanitizeCode(joinCode);
-    if (!canUseMultiplayer) {
-      setError('Please sign in first to use cloud multiplayer.');
-      return;
-    }
+    const ready = await ensureMultiplayerAuth();
+    if (!ready) return;
     if (!code) {
       setError('Please enter a challenge code.');
       return;
@@ -768,7 +777,13 @@ function MultiplayerScreen({
 
         {!canUseMultiplayer && (
           <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            Sign in first from the Cloud Profile panel to use multiplayer features.
+            You can play multiplayer as guest. Guest matches are marked unranked.
+            <button
+              onClick={() => void onGuestBootstrap()}
+              className="ml-2 inline-flex items-center rounded-lg bg-black px-3 py-1.5 text-xs font-bold text-white hover:bg-gray-800"
+            >
+              Continue as Guest
+            </button>
           </div>
         )}
 
@@ -837,7 +852,7 @@ function MultiplayerScreen({
                   {snapshot.challenge.code}
                 </h2>
                 <p className="text-sm text-gray-300 mt-1">
-                  Level {snapshot.challenge.levelId} • {snapshot.challenge.status.toUpperCase()}
+                  Level {snapshot.challenge.levelId} • {snapshot.challenge.status.toUpperCase()} • {snapshot.challenge.isRanked ? 'RANKED' : 'UNRANKED'}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -1018,7 +1033,7 @@ function AccountPanel({
   syncStateLabel: string;
   googleEnabled: boolean;
   googleSlotRef: React.RefObject<HTMLDivElement | null>;
-  onGuestLogin: () => void;
+  onGuestLogin: () => Promise<boolean>;
   onEmailLogin: (params: { email: string; password: string }) => void;
   onEmailRegister: (params: { email: string; password: string; displayName: string }) => void;
   onLogout: () => void;
@@ -1071,7 +1086,7 @@ function AccountPanel({
               Sign in to keep levels and stats across devices.
             </p>
             <button
-              onClick={onGuestLogin}
+              onClick={() => void onGuestLogin()}
               className="w-full py-2.5 rounded-xl bg-black text-white text-sm font-bold hover:bg-gray-800 transition-all mb-2"
             >
               Continue as Guest
@@ -1320,8 +1335,10 @@ export default function App() {
       await hydrateCloudForUser();
       showToast('Cloud guest profile connected.', 'success');
       trackEvent('auth_login', { provider: 'guest' });
+      return true;
     } catch (error) {
       setAuthError(authErrorToMessage(error));
+      return false;
     } finally {
       setAuthLoading(false);
     }
@@ -1949,6 +1966,7 @@ export default function App() {
           defaultLevel={level}
           onBack={() => setScreen('menu')}
           onPlayLevel={startLevel}
+          onGuestBootstrap={handleGuestLogin}
           onToast={showToast}
         />
         {!consent && (

@@ -20,6 +20,9 @@ Ship multiplayer in safe, iterative steps without destabilizing the current sing
 4. Both players submit final run result (won/lost, elapsed, remaining).
 5. Challenge details page shows simple ranking.
 
+Note:
+- Guest participation is allowed, but any challenge that includes a guest is marked `unranked` and excluded from rating calculations.
+
 ### Backend Scope
 
 - Add challenge tables:

@@ -225,6 +225,7 @@ function toChallengeDto(row) {
     id: row.id,
     code: row.code,
     levelId: row.level_id,
+    isRanked: row.is_ranked,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -596,10 +597,10 @@ app.post('/api/multiplayer/challenges', async (req, res) => {
   try {
     const code = await createUniqueChallengeCode();
     const created = await pool.query(
-      `INSERT INTO multiplayer_challenges (code, created_by_user_id, level_id, status, updated_at)
-       VALUES ($1, $2, $3, 'open', NOW())
+      `INSERT INTO multiplayer_challenges (code, created_by_user_id, level_id, is_ranked, status, updated_at)
+       VALUES ($1, $2, $3, $4, 'open', NOW())
        RETURNING *`,
-      [code, user.id, levelId],
+      [code, user.id, levelId, user.provider !== 'guest'],
     );
     const challenge = created.rows[0];
     await pool.query(
@@ -676,6 +677,15 @@ app.post('/api/multiplayer/challenges/:code/join', async (req, res) => {
        ON CONFLICT (challenge_id, user_id) DO NOTHING`,
       [row.id, user.id],
     );
+    if (user.provider === 'guest') {
+      await pool.query(
+        `UPDATE multiplayer_challenges
+         SET is_ranked = FALSE,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [row.id],
+      );
+    }
     await pool.query(
       `UPDATE multiplayer_challenges
        SET updated_at = NOW()
@@ -750,21 +760,36 @@ app.post('/api/multiplayer/challenges/:code/submit', async (req, res) => {
        WHERE challenge_id = $1 AND status = 'submitted'`,
       [challengeRow.id],
     );
+
+    const hasGuestParticipant = await pool.query(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM multiplayer_challenge_players p
+         JOIN users u ON u.id = p.user_id
+         WHERE p.challenge_id = $1
+           AND u.provider = 'guest'
+       ) AS has_guest`,
+      [challengeRow.id],
+    );
+    const shouldBeRanked = !hasGuestParticipant.rows[0].has_guest;
+
     if (submittedCount.rows[0].count >= 2) {
       await pool.query(
         `UPDATE multiplayer_challenges
          SET status = 'closed',
+             is_ranked = $2,
              closed_at = COALESCE(closed_at, NOW()),
              updated_at = NOW()
          WHERE id = $1`,
-        [challengeRow.id],
+        [challengeRow.id, shouldBeRanked],
       );
     } else {
       await pool.query(
         `UPDATE multiplayer_challenges
-         SET updated_at = NOW()
+         SET is_ranked = $2,
+             updated_at = NOW()
          WHERE id = $1`,
-        [challengeRow.id],
+        [challengeRow.id, shouldBeRanked],
       );
     }
 

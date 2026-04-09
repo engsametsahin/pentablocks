@@ -48,6 +48,7 @@ export interface MultiplayerChallenge {
   id: number;
   code: string;
   levelId: number;
+  isRanked: boolean;
   status: 'open' | 'closed';
   createdAt: string;
   updatedAt: string;

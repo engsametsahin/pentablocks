@@ -80,11 +80,15 @@ CREATE TABLE IF NOT EXISTS multiplayer_challenges (
   code TEXT NOT NULL UNIQUE,
   created_by_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   level_id INTEGER NOT NULL,
+  is_ranked BOOLEAN NOT NULL DEFAULT TRUE,
   status TEXT NOT NULL DEFAULT 'open',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   closed_at TIMESTAMPTZ
 );
+
+ALTER TABLE multiplayer_challenges
+  ADD COLUMN IF NOT EXISTS is_ranked BOOLEAN NOT NULL DEFAULT TRUE;
 
 DO $$
 BEGIN
