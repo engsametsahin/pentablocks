@@ -9,6 +9,7 @@ const app = express();
 
 const API_PORT = Number(process.env.API_PORT ?? 8787);
 const APP_ORIGIN = process.env.APP_ORIGIN ?? 'http://localhost:3020';
+const APP_ORIGINS = process.env.APP_ORIGINS ?? '';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? '';
 const SESSION_COOKIE = 'pb_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
@@ -16,15 +17,49 @@ const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null
 
 app.use(express.json({ limit: '1mb' }));
 
-function corsHeaders(res) {
-  res.header('Access-Control-Allow-Origin', APP_ORIGIN);
+function deriveCompanionOrigin(origin) {
+  try {
+    const url = new URL(origin);
+    const host = url.hostname;
+    if (host.startsWith('www.')) {
+      url.hostname = host.slice(4);
+      return url.toString().replace(/\/$/, '');
+    }
+    if (!host.startsWith('localhost') && host.split('.').length >= 2) {
+      url.hostname = `www.${host}`;
+      return url.toString().replace(/\/$/, '');
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function buildAllowedOrigins() {
+  const set = new Set([APP_ORIGIN]);
+  for (const raw of APP_ORIGINS.split(',')) {
+    const trimmed = raw.trim();
+    if (trimmed) set.add(trimmed);
+  }
+  const companion = deriveCompanionOrigin(APP_ORIGIN);
+  if (companion) set.add(companion);
+  return set;
+}
+
+const ALLOWED_ORIGINS = buildAllowedOrigins();
+
+function corsHeaders(req, res) {
+  const requestOrigin = req.headers.origin;
+  const allowOrigin = requestOrigin && ALLOWED_ORIGINS.has(requestOrigin) ? requestOrigin : APP_ORIGIN;
+  res.header('Vary', 'Origin');
+  res.header('Access-Control-Allow-Origin', allowOrigin);
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
 }
 
 app.use((req, res, next) => {
-  corsHeaders(res);
+  corsHeaders(req, res);
   if (req.method === 'OPTIONS') {
     res.status(204).end();
     return;
