@@ -1564,6 +1564,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const challengeCode = new URLSearchParams(window.location.search).get('challenge');
+    if (!challengeCode) return;
+    setScreen('multiplayer');
+  }, []);
+
+  useEffect(() => {
     let active = true;
     setAuthLoading(true);
     const safetyTimeout = window.setTimeout(() => {
@@ -2672,14 +2678,24 @@ export default function App() {
                   <div className="bg-gray-50 border border-black/10 rounded-2xl p-4 text-left mb-6">
                     <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Match Times</p>
                     <div className="space-y-2 text-sm">
-                      {(matchSnapshot?.players ?? []).map((player) => (
-                        <div key={player.userId} className="flex items-center justify-between">
-                          <span className="font-bold text-gray-700">{player.displayName}</span>
-                          <span className="text-gray-500">
-                            {player.elapsedSeconds !== null ? `${player.elapsedSeconds}s` : 'No finish'}
-                          </span>
-                        </div>
-                      ))}
+                      {(() => {
+                        const winnerUserId = matchSnapshot?.challenge.winnerUserId ?? activeChallenge?.winnerUserId ?? null;
+                        return (matchSnapshot?.players ?? []).map((player) => {
+                          const isWinner = winnerUserId !== null && player.userId === winnerUserId;
+                          return (
+                            <div key={player.userId} className="flex items-center justify-between">
+                              <span className="font-bold text-gray-700">{player.displayName}</span>
+                              <span className={cn('font-semibold', isWinner ? 'text-emerald-600' : 'text-gray-500')}>
+                                {winnerUserId !== null
+                                  ? (isWinner
+                                    ? `Won ${player.elapsedSeconds !== null ? `${player.elapsedSeconds}s` : ''}`.trim()
+                                    : 'DNF')
+                                  : (player.elapsedSeconds !== null ? `${player.elapsedSeconds}s` : 'No finish')}
+                              </span>
+                            </div>
+                          );
+                        });
+                      })()}
                       {(matchSnapshot?.players ?? []).length === 0 && (
                         <p className="text-gray-500">Waiting for final scores...</p>
                       )}
