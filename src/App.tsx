@@ -232,7 +232,7 @@ function mergeStats(localStats: PlayerStats, cloudStats: PlayerStats): PlayerSta
 function authErrorToMessage(error: unknown) {
   const code = error instanceof Error ? error.message : 'unknown_error';
   const map: Record<string, string> = {
-    network_error: 'Cannot reach cloud service. Make sure API server is running on localhost:8787.',
+    network_error: 'Cloud service is temporarily unreachable. Please try again in a few seconds.',
     invalid_email: 'Please enter a valid email address.',
     password_too_short: 'Password must be at least 8 characters.',
     email_already_registered: 'This email is already registered. Please sign in.',

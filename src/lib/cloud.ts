@@ -23,16 +23,21 @@ export interface CloudProgress {
   updatedAt: string | null;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787';
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
+const API_BASE = configuredApiBase
+  ? configuredApiBase.replace(/\/+$/, '')
+  : (import.meta.env.DEV ? 'http://localhost:8787' : '');
 
 interface RequestOptions extends RequestInit {
   allowUnauthorized?: boolean;
 }
 
 async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const url = API_BASE ? `${API_BASE}${path}` : path;
+
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}${path}`, {
+    response = await fetch(url, {
       ...options,
       credentials: 'include',
       headers: {
