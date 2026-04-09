@@ -207,28 +207,6 @@ function readLocalLastLevel() {
   }
 }
 
-function mergeBestTimes(localBest: Record<number, number>, cloudBest: Record<number, number>) {
-  const merged: Record<number, number> = { ...cloudBest };
-  for (const [key, value] of Object.entries(localBest)) {
-    const lvl = Number(key);
-    if (!Number.isFinite(lvl) || !Number.isFinite(value)) continue;
-    const previous = merged[lvl];
-    if (previous === undefined || value > previous) merged[lvl] = value;
-  }
-  return merged;
-}
-
-function mergeStats(localStats: PlayerStats, cloudStats: PlayerStats): PlayerStats {
-  return {
-    gamesStarted: Math.max(localStats.gamesStarted, cloudStats.gamesStarted),
-    wins: Math.max(localStats.wins, cloudStats.wins),
-    losses: Math.max(localStats.losses, cloudStats.losses),
-    restarts: Math.max(localStats.restarts, cloudStats.restarts),
-    hintsUsed: Math.max(localStats.hintsUsed, cloudStats.hintsUsed),
-    totalPlaySeconds: Math.max(localStats.totalPlaySeconds, cloudStats.totalPlaySeconds),
-  };
-}
-
 function authErrorToMessage(error: unknown) {
   const code = error instanceof Error ? error.message : 'unknown_error';
   const map: Record<string, string> = {
@@ -1055,43 +1033,18 @@ export default function App() {
     localStorage.setItem(LOCAL_LAST_LEVEL_KEY, String(payload.lastLevel));
   }, []);
 
-  const mergeLocalWithCloud = useCallback((cloudPayload: {
-    completedLevels: number[];
-    bestTimes: Record<number, number>;
-    playerStats: PlayerStats;
-    lastLevel: number;
-  }) => {
-    const localCompleted = [...completedLevels];
-    const mergedCompleted = [...new Set<number>([...localCompleted, ...cloudPayload.completedLevels])].sort((a, b) => a - b);
-    const mergedBest = mergeBestTimes(bestTimes, cloudPayload.bestTimes);
-    const mergedStats = mergeStats(playerStats, cloudPayload.playerStats);
-    const mergedLastLevel = Math.max(level, cloudPayload.lastLevel, 1);
-
-    return {
-      completedLevels: mergedCompleted,
-      bestTimes: mergedBest,
-      playerStats: mergedStats,
-      lastLevel: Math.min(MAX_LEVEL, mergedLastLevel),
-    };
-  }, [bestTimes, completedLevels, level, playerStats]);
-
   const hydrateCloudForUser = useCallback(async () => {
     const cloudPayload = await fetchCloudProgress();
-    const merged = mergeLocalWithCloud({
+    const isolated = {
       completedLevels: cloudPayload.completedLevels,
       bestTimes: cloudPayload.bestTimes,
       playerStats: cloudPayload.playerStats,
       lastLevel: cloudPayload.lastLevel,
-    });
-    applyMergedProgress(merged);
-    await saveCloudProgress({
-      completedLevels: merged.completedLevels,
-      bestTimes: merged.bestTimes,
-      playerStats: merged.playerStats,
-      lastLevel: merged.lastLevel,
-    });
+    };
+    // Account progress must be isolated per user. Do not auto-merge local device data.
+    applyMergedProgress(isolated);
     setCloudReady(true);
-  }, [applyMergedProgress, mergeLocalWithCloud]);
+  }, [applyMergedProgress]);
 
   const handleGuestLogin = useCallback(async () => {
     try {
