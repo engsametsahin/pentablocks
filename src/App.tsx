@@ -1387,6 +1387,37 @@ export default function App() {
     setPlayerStats((prev) => updater(prev));
   }, []);
 
+  const submitChallengeResult = useCallback(async (didWin: boolean, remainingOverride?: number) => {
+    if (!activeChallenge || hasSubmittedMatchResult) return null;
+    const elapsedSeconds = Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000));
+    const remainingSeconds = Math.max(0, Math.floor(remainingOverride ?? timeLeft));
+    try {
+      const snapshot = await submitMultiplayerChallengeResult(activeChallenge.code, {
+        didWin,
+        elapsedSeconds,
+        remainingSeconds,
+      });
+      setHasSubmittedMatchResult(true);
+      setMatchSnapshot(snapshot);
+      setActiveChallenge({
+        code: snapshot.challenge.code,
+        levelId: snapshot.challenge.levelId,
+        puzzleSeed: snapshot.challenge.puzzleSeed,
+        isRanked: snapshot.challenge.isRanked,
+        startAt: snapshot.challenge.startAt,
+        winnerUserId: snapshot.challenge.winnerUserId,
+      });
+      if (authUser && authUser.provider !== 'guest') {
+        const payload = await fetchMultiplayerStats();
+        setMultiplayerStats(payload.stats);
+      }
+      return snapshot;
+    } catch (error) {
+      setAuthError(authErrorToMessage(error));
+      return null;
+    }
+  }, [activeChallenge, authUser, hasSubmittedMatchResult, timeLeft]);
+
   const applyConsent = useCallback((personalizedAds: boolean) => {
     const nextConsent: ConsentState = {
       acceptedAt: new Date().toISOString(),
@@ -1881,37 +1912,6 @@ export default function App() {
       window.clearInterval(interval);
     };
   }, [isMultiplayerLocked]);
-
-  const submitChallengeResult = useCallback(async (didWin: boolean, remainingOverride?: number) => {
-    if (!activeChallenge || hasSubmittedMatchResult) return null;
-    const elapsedSeconds = Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000));
-    const remainingSeconds = Math.max(0, Math.floor(remainingOverride ?? timeLeft));
-    try {
-      const snapshot = await submitMultiplayerChallengeResult(activeChallenge.code, {
-        didWin,
-        elapsedSeconds,
-        remainingSeconds,
-      });
-      setHasSubmittedMatchResult(true);
-      setMatchSnapshot(snapshot);
-      setActiveChallenge({
-        code: snapshot.challenge.code,
-        levelId: snapshot.challenge.levelId,
-        puzzleSeed: snapshot.challenge.puzzleSeed,
-        isRanked: snapshot.challenge.isRanked,
-        startAt: snapshot.challenge.startAt,
-        winnerUserId: snapshot.challenge.winnerUserId,
-      });
-      if (authUser && authUser.provider !== 'guest') {
-        const payload = await fetchMultiplayerStats();
-        setMultiplayerStats(payload.stats);
-      }
-      return snapshot;
-    } catch (error) {
-      setAuthError(authErrorToMessage(error));
-      return null;
-    }
-  }, [activeChallenge, authUser, hasSubmittedMatchResult, timeLeft]);
 
   // Timer
   useEffect(() => {
