@@ -1202,7 +1202,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [authUser, handleGoogleCredential]);
+  }, [authUser, handleGoogleCredential, googleEnabled]);
 
   useEffect(() => {
     trackEvent('screen_view', { screen });
