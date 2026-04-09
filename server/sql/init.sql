@@ -74,3 +74,67 @@ CREATE TABLE IF NOT EXISTS user_credentials (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS multiplayer_challenges (
+  id BIGSERIAL PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  created_by_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  level_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'multiplayer_challenges'
+      AND nsp.nspname = current_schema()
+      AND con.conname = 'multiplayer_challenges_status_check'
+  ) THEN
+    ALTER TABLE multiplayer_challenges
+      ADD CONSTRAINT multiplayer_challenges_status_check CHECK (status IN ('open', 'closed'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS multiplayer_challenges_creator_idx
+  ON multiplayer_challenges (created_by_user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS multiplayer_challenges_status_idx
+  ON multiplayer_challenges (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS multiplayer_challenge_players (
+  challenge_id BIGINT NOT NULL REFERENCES multiplayer_challenges(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL DEFAULT 'joined',
+  did_win BOOLEAN,
+  elapsed_seconds INTEGER,
+  remaining_seconds INTEGER,
+  submitted_at TIMESTAMPTZ,
+  PRIMARY KEY (challenge_id, user_id)
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'multiplayer_challenge_players'
+      AND nsp.nspname = current_schema()
+      AND con.conname = 'multiplayer_challenge_players_status_check'
+  ) THEN
+    ALTER TABLE multiplayer_challenge_players
+      ADD CONSTRAINT multiplayer_challenge_players_status_check CHECK (status IN ('joined', 'submitted'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS multiplayer_challenge_players_user_idx
+  ON multiplayer_challenge_players (user_id, joined_at DESC);

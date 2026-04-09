@@ -5,13 +5,14 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RotateCw, FlipHorizontal, RefreshCw, Trophy, Timer, ChevronRight, ChevronLeft, Lock, Users, User, Star, BarChart3, Target, Zap, Medal } from 'lucide-react';
+import { RotateCw, FlipHorizontal, RefreshCw, Trophy, Timer, ChevronRight, ChevronLeft, Lock, Users, User, Star, BarChart3, Target, Zap, Medal, Link2, Copy } from 'lucide-react';
 import { ALL_PIECES, Piece, Point, rotateShape, flipShape } from './constants';
 import { solveKatamino } from './solver';
 import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
 import { fetchCloudProgress, fetchCurrentUser, saveCloudProgress, signInEmail, signInGoogle, signInGuest, signOutCloud, signUpEmail, type CloudUser } from './lib/cloud';
 import { mountGoogleLoginButton } from './lib/googleIdentity';
+import { createMultiplayerChallenge, fetchMultiplayerChallenge, joinMultiplayerChallenge, type MultiplayerChallengeSnapshot } from './lib/multiplayer';
 
 const CELL_SIZE = 45;
 const GRID_PADDING = 32; // p-8
@@ -31,7 +32,7 @@ const DEFAULT_PLAYER_STATS: PlayerStats = {
   totalPlaySeconds: 0,
 };
 
-type Screen = 'menu' | 'levelSelect' | 'game' | 'stats';
+type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer';
 
 type LevelFilter = 'all' | 'unlocked' | 'completed';
 type ToastTone = 'neutral' | 'success' | 'warning';
@@ -221,6 +222,13 @@ function authErrorToMessage(error: unknown) {
     guest_auth_failed: 'Guest sign-in failed. Try again.',
     email_register_failed: 'Email registration failed. Try again.',
     email_login_failed: 'Email sign-in failed. Try again.',
+    unauthorized: 'Please sign in first to use cloud multiplayer.',
+    challenge_not_found: 'Challenge code not found.',
+    challenge_closed: 'This challenge is already closed.',
+    challenge_create_failed: 'Could not create challenge. Please try again.',
+    challenge_join_failed: 'Could not join challenge. Please try again.',
+    challenge_fetch_failed: 'Could not load challenge details.',
+    challenge_submit_failed: 'Could not submit challenge result.',
     request_failed_500: 'Server error while signing in. Try again.',
     request_failed_503: 'Auth service is not ready yet. Try again.',
   };
@@ -281,10 +289,10 @@ function MenuScreen({
         </button>
         <button
           onClick={onMultiplayer}
-          className="relative w-full py-5 bg-white/8 text-white/30 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 cursor-not-allowed overflow-hidden border border-white/10"
+          className="relative w-full py-5 bg-white/10 text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-white/20 transition-all active:scale-95 overflow-hidden border border-white/20"
         >
           <Users size={22} /> Multiplayer
-          <span className="absolute top-2 right-3 text-[10px] bg-white/15 text-white/50 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Soon</span>
+          <span className="absolute top-2 right-3 text-[10px] bg-emerald-400 text-black px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Beta</span>
         </button>
       </motion.div>
 
@@ -632,6 +640,253 @@ function StatsScreen({
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MultiplayerScreen({
+  user,
+  defaultLevel,
+  onBack,
+  onPlayLevel,
+  onToast,
+}: {
+  user: CloudUser | null;
+  defaultLevel: number;
+  onBack: () => void;
+  onPlayLevel: (level: number) => void;
+  onToast: (message: string, tone?: ToastTone) => void;
+}) {
+  const [levelId, setLevelId] = useState(defaultLevel);
+  const [joinCode, setJoinCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
+
+  useEffect(() => {
+    setLevelId(defaultLevel);
+  }, [defaultLevel]);
+
+  const sanitizeCode = (raw: string) => raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+
+  const shareLink = snapshot
+    ? `${window.location.origin}/?challenge=${snapshot.challenge.code}`
+    : null;
+
+  const canUseMultiplayer = Boolean(user);
+
+  const handleCreate = async () => {
+    if (!canUseMultiplayer) {
+      setError('Please sign in first to use cloud multiplayer.');
+      return;
+    }
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await createMultiplayerChallenge(levelId);
+      setSnapshot(data);
+      setJoinCode(data.challenge.code);
+      onToast(`Challenge ${data.challenge.code} created.`, 'success');
+      trackEvent('multiplayer_challenge_created', { level: levelId, code: data.challenge.code });
+    } catch (err) {
+      setError(authErrorToMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleJoin = async () => {
+    const code = sanitizeCode(joinCode);
+    if (!canUseMultiplayer) {
+      setError('Please sign in first to use cloud multiplayer.');
+      return;
+    }
+    if (!code) {
+      setError('Please enter a challenge code.');
+      return;
+    }
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await joinMultiplayerChallenge(code);
+      setSnapshot(data);
+      setJoinCode(data.challenge.code);
+      onToast(`Joined challenge ${data.challenge.code}.`, 'success');
+      trackEvent('multiplayer_challenge_joined', { code: data.challenge.code });
+    } catch (err) {
+      setError(authErrorToMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    const code = snapshot?.challenge.code ?? sanitizeCode(joinCode);
+    if (!code) return;
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await fetchMultiplayerChallenge(code);
+      setSnapshot({ challenge: data.challenge, players: data.players });
+      setJoinCode(data.challenge.code);
+    } catch (err) {
+      setError(authErrorToMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!shareLink) return;
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      onToast('Challenge link copied.', 'success');
+    } catch {
+      onToast('Copy failed. You can copy it manually.', 'warning');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
+      <div className="max-w-5xl mx-auto">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={onBack}
+              className="p-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-all active:scale-95"
+              aria-label="Back"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <div>
+              <h1 className="text-3xl font-black tracking-tight">Multiplayer Beta</h1>
+              <p className="text-sm text-gray-500">Create a challenge code or join a friend&apos;s code.</p>
+            </div>
+          </div>
+        </div>
+
+        {!canUseMultiplayer && (
+          <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            Sign in first from the Cloud Profile panel to use multiplayer features.
+          </div>
+        )}
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="bg-white rounded-3xl p-6 border border-black/5 shadow-sm">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Create Challenge</p>
+            <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Level</label>
+            <input
+              type="number"
+              min={1}
+              max={MAX_LEVEL}
+              value={levelId}
+              onChange={(e) => setLevelId(Math.min(MAX_LEVEL, Math.max(1, Number(e.target.value || 1))))}
+              className="mt-2 w-full mb-4 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleCreate}
+                disabled={loading}
+                className="flex-1 py-2.5 rounded-xl bg-black text-white text-sm font-bold hover:bg-gray-800 disabled:opacity-50"
+              >
+                {loading ? 'Working...' : 'Create Code'}
+              </button>
+              <button
+                onClick={() => onPlayLevel(levelId)}
+                className="px-4 py-2.5 rounded-xl border border-black/10 text-sm font-bold hover:bg-gray-50"
+              >
+                Play
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl p-6 border border-black/5 shadow-sm">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Join Challenge</p>
+            <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Code</label>
+            <input
+              type="text"
+              value={joinCode}
+              onChange={(e) => setJoinCode(sanitizeCode(e.target.value))}
+              placeholder="EXAMPLE: A1B2C3D4"
+              className="mt-2 w-full mb-4 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white uppercase tracking-wider"
+            />
+            <button
+              onClick={handleJoin}
+              disabled={loading}
+              className="w-full py-2.5 rounded-xl bg-emerald-500 text-black text-sm font-bold hover:bg-emerald-400 disabled:opacity-50"
+            >
+              {loading ? 'Working...' : 'Join Code'}
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {snapshot && (
+          <div className="mt-6 bg-gray-900 text-white rounded-[32px] p-6 shadow-2xl">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-5">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold mb-1">Active Challenge</p>
+                <h2 className="text-2xl font-black flex items-center gap-2">
+                  <Link2 size={20} />
+                  {snapshot.challenge.code}
+                </h2>
+                <p className="text-sm text-gray-300 mt-1">
+                  Level {snapshot.challenge.levelId} • {snapshot.challenge.status.toUpperCase()}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleRefresh}
+                  className="px-3 py-2 rounded-xl bg-white/10 text-xs font-bold hover:bg-white/20"
+                >
+                  Refresh
+                </button>
+                <button
+                  onClick={handleCopy}
+                  className="px-3 py-2 rounded-xl bg-emerald-400 text-black text-xs font-bold hover:bg-emerald-300 flex items-center gap-1"
+                >
+                  <Copy size={14} /> Copy Link
+                </button>
+                <button
+                  onClick={() => onPlayLevel(snapshot.challenge.levelId)}
+                  className="px-3 py-2 rounded-xl bg-white text-black text-xs font-bold hover:bg-gray-100"
+                >
+                  Play Challenge
+                </button>
+              </div>
+            </div>
+
+            {shareLink && (
+              <div className="mb-5 p-3 rounded-xl bg-white/6 text-xs text-gray-300 break-all">
+                {shareLink}
+              </div>
+            )}
+
+            <div className="grid gap-2">
+              {snapshot.players.map((player) => (
+                <div key={player.userId} className="rounded-2xl bg-white/6 px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <p className="font-bold">{player.displayName}</p>
+                    <p className="text-xs text-gray-400">{player.provider} • {player.status}</p>
+                  </div>
+                  <div className="text-right text-xs text-gray-300">
+                    {player.elapsedSeconds !== null ? (
+                      <p>Elapsed: {player.elapsedSeconds}s</p>
+                    ) : (
+                      <p>Waiting result...</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1662,7 +1917,7 @@ export default function App() {
           continueLevel={level}
           onSinglePlayer={() => setScreen('levelSelect')}
           onStats={() => setScreen('stats')}
-          onMultiplayer={() => {/* coming soon */}}
+          onMultiplayer={() => setScreen('multiplayer')}
         />
         <AccountPanel
           user={authUser}
@@ -1675,6 +1930,26 @@ export default function App() {
           onEmailLogin={handleEmailLogin}
           onEmailRegister={handleEmailRegister}
           onLogout={handleLogout}
+        />
+        {!consent && (
+          <ConsentBanner
+            onAcceptPersonalized={() => applyConsent(true)}
+            onAcceptEssential={() => applyConsent(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  if (screen === 'multiplayer') {
+    return (
+      <>
+        <MultiplayerScreen
+          user={authUser}
+          defaultLevel={level}
+          onBack={() => setScreen('menu')}
+          onPlayLevel={startLevel}
+          onToast={showToast}
         />
         {!consent && (
           <ConsentBanner

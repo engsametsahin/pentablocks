@@ -14,6 +14,9 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE
 const SESSION_COOKIE = 'pb_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+const MAX_LEVEL = 100;
+const CHALLENGE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const CHALLENGE_CODE_LENGTH = 8;
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -183,8 +186,108 @@ function sanitizeProgress(input) {
   const completedLevels = sanitizeCompletedLevels(safe.completedLevels);
   const bestTimes = sanitizeBestTimes(safe.bestTimes);
   const playerStats = sanitizePlayerStats(safe.playerStats);
-  const lastLevel = Math.min(100, Math.max(1, toSafeInt(safe.lastLevel, 1)));
+  const lastLevel = Math.min(MAX_LEVEL, Math.max(1, toSafeInt(safe.lastLevel, 1)));
   return { completedLevels, bestTimes, playerStats, lastLevel };
+}
+
+function sanitizeLevelId(input) {
+  return Math.min(MAX_LEVEL, Math.max(1, toSafeInt(input, 1)));
+}
+
+function normalizeChallengeCode(input) {
+  if (typeof input !== 'string') return '';
+  return input.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CHALLENGE_CODE_LENGTH);
+}
+
+function buildChallengeCode() {
+  let out = '';
+  for (let i = 0; i < CHALLENGE_CODE_LENGTH; i += 1) {
+    const idx = Math.floor(Math.random() * CHALLENGE_CODE_ALPHABET.length);
+    out += CHALLENGE_CODE_ALPHABET[idx];
+  }
+  return out;
+}
+
+async function createUniqueChallengeCode() {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const code = buildChallengeCode();
+    const existing = await pool.query(
+      'SELECT 1 FROM multiplayer_challenges WHERE code = $1 LIMIT 1',
+      [code],
+    );
+    if (existing.rows.length === 0) return code;
+  }
+  return crypto.randomBytes(6).toString('base64url').toUpperCase().slice(0, CHALLENGE_CODE_LENGTH);
+}
+
+function toChallengeDto(row) {
+  return {
+    id: row.id,
+    code: row.code,
+    levelId: row.level_id,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    closedAt: row.closed_at,
+    creator: {
+      id: row.created_by_user_id,
+      displayName: row.creator_display_name,
+      provider: row.creator_provider,
+    },
+  };
+}
+
+function toChallengePlayerDto(row) {
+  return {
+    userId: row.user_id,
+    displayName: row.display_name,
+    provider: row.provider,
+    joinedAt: row.joined_at,
+    status: row.status,
+    didWin: row.did_win,
+    elapsedSeconds: row.elapsed_seconds,
+    remainingSeconds: row.remaining_seconds,
+    submittedAt: row.submitted_at,
+  };
+}
+
+async function readChallengeByCode(code) {
+  const challenge = await pool.query(
+    `SELECT c.*,
+            u.display_name AS creator_display_name,
+            u.provider AS creator_provider
+     FROM multiplayer_challenges c
+     JOIN users u ON u.id = c.created_by_user_id
+     WHERE c.code = $1
+     LIMIT 1`,
+    [code],
+  );
+
+  if (challenge.rows.length === 0) return null;
+  const row = challenge.rows[0];
+  const players = await pool.query(
+    `SELECT p.*,
+            u.display_name,
+            u.provider
+     FROM multiplayer_challenge_players p
+     JOIN users u ON u.id = p.user_id
+     WHERE p.challenge_id = $1
+     ORDER BY
+       CASE
+         WHEN p.status = 'submitted' AND p.did_win = TRUE THEN 0
+         WHEN p.status = 'submitted' AND p.did_win = FALSE THEN 1
+         ELSE 2
+       END ASC,
+       p.elapsed_seconds ASC NULLS LAST,
+       p.remaining_seconds DESC NULLS LAST,
+       p.joined_at ASC`,
+    [row.id],
+  );
+
+  return {
+    challenge: toChallengeDto(row),
+    players: players.rows.map(toChallengePlayerDto),
+  };
 }
 
 function toUserDto(row) {
@@ -481,6 +584,195 @@ app.put('/api/progress', async (req, res) => {
   } catch (error) {
     console.error('progress save error', error);
     res.status(500).json({ error: 'progress_save_failed' });
+  }
+});
+
+app.post('/api/multiplayer/challenges', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const levelId = sanitizeLevelId(req.body?.levelId ?? req.body?.level);
+
+  try {
+    const code = await createUniqueChallengeCode();
+    const created = await pool.query(
+      `INSERT INTO multiplayer_challenges (code, created_by_user_id, level_id, status, updated_at)
+       VALUES ($1, $2, $3, 'open', NOW())
+       RETURNING *`,
+      [code, user.id, levelId],
+    );
+    const challenge = created.rows[0];
+    await pool.query(
+      `INSERT INTO multiplayer_challenge_players (challenge_id, user_id, status)
+       VALUES ($1, $2, 'joined')
+       ON CONFLICT (challenge_id, user_id) DO NOTHING`,
+      [challenge.id, user.id],
+    );
+
+    const snapshot = await readChallengeByCode(code);
+    res.status(201).json(snapshot);
+  } catch (error) {
+    console.error('multiplayer create challenge error', error);
+    res.status(500).json({ error: 'challenge_create_failed' });
+  }
+});
+
+app.get('/api/multiplayer/challenges/:code', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const code = normalizeChallengeCode(req.params.code);
+  if (!code) {
+    res.status(400).json({ error: 'invalid_challenge_code' });
+    return;
+  }
+
+  try {
+    const snapshot = await readChallengeByCode(code);
+    if (!snapshot) {
+      res.status(404).json({ error: 'challenge_not_found' });
+      return;
+    }
+    const isParticipant = snapshot.players.some((player) => player.userId === user.id);
+    res.json({ ...snapshot, viewer: { isParticipant } });
+  } catch (error) {
+    console.error('multiplayer read challenge error', error);
+    res.status(500).json({ error: 'challenge_fetch_failed' });
+  }
+});
+
+app.post('/api/multiplayer/challenges/:code/join', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const code = normalizeChallengeCode(req.params.code);
+  if (!code) {
+    res.status(400).json({ error: 'invalid_challenge_code' });
+    return;
+  }
+
+  try {
+    const challenge = await pool.query(
+      `SELECT id, status
+       FROM multiplayer_challenges
+       WHERE code = $1
+       LIMIT 1`,
+      [code],
+    );
+    if (challenge.rows.length === 0) {
+      res.status(404).json({ error: 'challenge_not_found' });
+      return;
+    }
+
+    const row = challenge.rows[0];
+    if (row.status !== 'open') {
+      res.status(409).json({ error: 'challenge_closed' });
+      return;
+    }
+
+    await pool.query(
+      `INSERT INTO multiplayer_challenge_players (challenge_id, user_id, status)
+       VALUES ($1, $2, 'joined')
+       ON CONFLICT (challenge_id, user_id) DO NOTHING`,
+      [row.id, user.id],
+    );
+    await pool.query(
+      `UPDATE multiplayer_challenges
+       SET updated_at = NOW()
+       WHERE id = $1`,
+      [row.id],
+    );
+
+    const snapshot = await readChallengeByCode(code);
+    res.json(snapshot);
+  } catch (error) {
+    console.error('multiplayer join challenge error', error);
+    res.status(500).json({ error: 'challenge_join_failed' });
+  }
+});
+
+app.post('/api/multiplayer/challenges/:code/submit', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const code = normalizeChallengeCode(req.params.code);
+  if (!code) {
+    res.status(400).json({ error: 'invalid_challenge_code' });
+    return;
+  }
+
+  const didWin = Boolean(req.body?.didWin);
+  const elapsedSeconds = Math.max(0, toSafeInt(req.body?.elapsedSeconds, 0));
+  const remainingSeconds = Math.max(0, toSafeInt(req.body?.remainingSeconds, 0));
+
+  try {
+    const challenge = await pool.query(
+      `SELECT id, status
+       FROM multiplayer_challenges
+       WHERE code = $1
+       LIMIT 1`,
+      [code],
+    );
+    if (challenge.rows.length === 0) {
+      res.status(404).json({ error: 'challenge_not_found' });
+      return;
+    }
+
+    const challengeRow = challenge.rows[0];
+    if (challengeRow.status !== 'open') {
+      res.status(409).json({ error: 'challenge_closed' });
+      return;
+    }
+
+    await pool.query(
+      `INSERT INTO multiplayer_challenge_players (
+         challenge_id,
+         user_id,
+         status,
+         did_win,
+         elapsed_seconds,
+         remaining_seconds,
+         submitted_at
+       )
+       VALUES ($1, $2, 'submitted', $3, $4, $5, NOW())
+       ON CONFLICT (challenge_id, user_id) DO UPDATE SET
+         status = 'submitted',
+         did_win = EXCLUDED.did_win,
+         elapsed_seconds = EXCLUDED.elapsed_seconds,
+         remaining_seconds = EXCLUDED.remaining_seconds,
+         submitted_at = NOW()`,
+      [challengeRow.id, user.id, didWin, elapsedSeconds, remainingSeconds],
+    );
+
+    const submittedCount = await pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM multiplayer_challenge_players
+       WHERE challenge_id = $1 AND status = 'submitted'`,
+      [challengeRow.id],
+    );
+    if (submittedCount.rows[0].count >= 2) {
+      await pool.query(
+        `UPDATE multiplayer_challenges
+         SET status = 'closed',
+             closed_at = COALESCE(closed_at, NOW()),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [challengeRow.id],
+      );
+    } else {
+      await pool.query(
+        `UPDATE multiplayer_challenges
+         SET updated_at = NOW()
+         WHERE id = $1`,
+        [challengeRow.id],
+      );
+    }
+
+    const snapshot = await readChallengeByCode(code);
+    res.json(snapshot);
+  } catch (error) {
+    console.error('multiplayer submit result error', error);
+    res.status(500).json({ error: 'challenge_submit_failed' });
   }
 });
 
