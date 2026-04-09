@@ -28,6 +28,21 @@ const API_BASE = configuredApiBase
   ? configuredApiBase.replace(/\/+$/, '')
   : (import.meta.env.DEV ? 'http://localhost:8787' : '');
 
+function buildApiUrl(path: string) {
+  if (!API_BASE) return path;
+
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const apiBaseEndsWithApi = /\/api$/i.test(API_BASE);
+  const pathStartsWithApi = /^\/api(\/|$)/i.test(normalizedPath);
+
+  if (apiBaseEndsWithApi && pathStartsWithApi) {
+    const strippedPath = normalizedPath.replace(/^\/api/i, '');
+    return `${API_BASE}${strippedPath || '/'}`;
+  }
+
+  return `${API_BASE}${normalizedPath}`;
+}
+
 interface RequestOptions extends RequestInit {
   allowUnauthorized?: boolean;
 }
@@ -35,7 +50,7 @@ interface RequestOptions extends RequestInit {
 const API_REQUEST_TIMEOUT_MS = 12000;
 
 async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const url = API_BASE ? `${API_BASE}${path}` : path;
+  const url = buildApiUrl(path);
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
 
