@@ -32,21 +32,31 @@ interface RequestOptions extends RequestInit {
   allowUnauthorized?: boolean;
 }
 
+const API_REQUEST_TIMEOUT_MS = 12000;
+
 async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const url = API_BASE ? `${API_BASE}${path}` : path;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
 
   let response: Response;
   try {
     response = await fetch(url, {
       ...options,
       credentials: 'include',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         ...(options.headers ?? {}),
       },
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('request_timeout');
+    }
     throw new Error('network_error');
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 
   if (!response.ok) {

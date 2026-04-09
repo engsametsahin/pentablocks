@@ -233,6 +233,8 @@ function authErrorToMessage(error: unknown) {
   const code = error instanceof Error ? error.message : 'unknown_error';
   const map: Record<string, string> = {
     network_error: 'Cloud service is temporarily unreachable. Please try again in a few seconds.',
+    request_timeout: 'Cloud request timed out. Please try again.',
+    auth_bootstrap_timeout: 'Session check took too long. You can sign in manually.',
     invalid_email: 'Please enter a valid email address.',
     password_too_short: 'Password must be at least 8 characters.',
     email_already_registered: 'This email is already registered. Please sign in.',
@@ -1180,6 +1182,12 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
+    const safetyTimeout = window.setTimeout(() => {
+      if (!active) return;
+      setAuthLoading(false);
+      setAuthError((prev) => prev ?? authErrorToMessage(new Error('auth_bootstrap_timeout')));
+    }, 10000);
+
     const bootstrapAuth = async () => {
       try {
         const user = await fetchCurrentUser();
@@ -1192,6 +1200,7 @@ export default function App() {
         if (!active) return;
         setAuthError(authErrorToMessage(error));
       } finally {
+        window.clearTimeout(safetyTimeout);
         if (active) setAuthLoading(false);
       }
     };
@@ -1200,6 +1209,7 @@ export default function App() {
 
     return () => {
       active = false;
+      window.clearTimeout(safetyTimeout);
     };
   }, [hydrateCloudForUser]);
 
