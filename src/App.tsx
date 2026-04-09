@@ -919,7 +919,7 @@ function ErrorModal({ message, onClose }: { message: string; onClose: () => void
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState<Screen>('menu');
-  const [completedLevels, setCompletedLevels] = useState<Set<number>>(() => readLocalCompletedLevels());
+  const [completedLevels, setCompletedLevels] = useState<Set<number>>(new Set<number>());
 
   const [availablePieces, setAvailablePieces] = useState<Piece[]>([]);
   const [placedPieces, setPlacedPieces] = useState<PlacedPiece[]>([]);
@@ -931,7 +931,7 @@ export default function App() {
   const [isSolving, setIsSolving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isShowingSolution, setIsShowingSolution] = useState(false);
-  const [level, setLevel] = useState(() => readLocalLastLevel());
+  const [level, setLevel] = useState(1);
   const [draggedPiece, setDraggedPiece] = useState<{ id: string; offset: Point } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [consent, setConsent] = useState<ConsentState | null>(() => {
@@ -991,8 +991,8 @@ export default function App() {
     return count;
   })();
 
-  const [bestTimes, setBestTimes] = useState<Record<number, number>>(() => readLocalBestTimes());
-  const [playerStats, setPlayerStats] = useState<PlayerStats>(() => readLocalStats());
+  const [bestTimes, setBestTimes] = useState<Record<number, number>>({});
+  const [playerStats, setPlayerStats] = useState<PlayerStats>({ ...DEFAULT_PLAYER_STATS });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const showToast = useCallback((message: string, tone: ToastTone = 'neutral') => {
@@ -1027,10 +1027,20 @@ export default function App() {
     setBestTimes(payload.bestTimes);
     setPlayerStats(payload.playerStats);
     setLevel(Math.min(MAX_LEVEL, Math.max(1, payload.lastLevel)));
-    localStorage.setItem(LOCAL_COMPLETED_KEY, JSON.stringify([...nextCompleted]));
-    localStorage.setItem(LOCAL_BEST_TIMES_KEY, JSON.stringify(payload.bestTimes));
-    localStorage.setItem(LOCAL_PLAYER_STATS_KEY, JSON.stringify(payload.playerStats));
-    localStorage.setItem(LOCAL_LAST_LEVEL_KEY, String(payload.lastLevel));
+  }, []);
+
+  const clearLegacyLocalProgress = useCallback(() => {
+    localStorage.removeItem(LOCAL_COMPLETED_KEY);
+    localStorage.removeItem(LOCAL_BEST_TIMES_KEY);
+    localStorage.removeItem(LOCAL_PLAYER_STATS_KEY);
+    localStorage.removeItem(LOCAL_LAST_LEVEL_KEY);
+  }, []);
+
+  const resetProgressToDefaults = useCallback(() => {
+    setCompletedLevels(new Set<number>());
+    setBestTimes({});
+    setPlayerStats({ ...DEFAULT_PLAYER_STATS });
+    setLevel(1);
   }, []);
 
   const hydrateCloudForUser = useCallback(async () => {
@@ -1116,12 +1126,14 @@ export default function App() {
       setAuthUser(null);
       setCloudReady(false);
       setAuthError(null);
-      showToast('Signed out. Local progress remains on this device.', 'neutral');
+      resetProgressToDefaults();
+      clearLegacyLocalProgress();
+      showToast('Signed out. Progress reset to Level 1 on this device.', 'neutral');
       trackEvent('auth_logout');
     } catch (error) {
       setAuthError(authErrorToMessage(error));
     }
-  }, [showToast]);
+  }, [clearLegacyLocalProgress, resetProgressToDefaults, showToast]);
 
   useEffect(() => {
     const rawCount = Number(localStorage.getItem(SESSION_COUNT_KEY) ?? '0');
@@ -1148,6 +1160,9 @@ export default function App() {
         if (user) {
           setAuthUser(user);
           await hydrateCloudForUser();
+        } else {
+          resetProgressToDefaults();
+          clearLegacyLocalProgress();
         }
       } catch (error) {
         if (!active) return;
@@ -1164,7 +1179,7 @@ export default function App() {
       active = false;
       window.clearTimeout(safetyTimeout);
     };
-  }, [hydrateCloudForUser]);
+  }, [clearLegacyLocalProgress, hydrateCloudForUser, resetProgressToDefaults]);
 
   useEffect(() => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -1192,14 +1207,6 @@ export default function App() {
   useEffect(() => {
     trackEvent('screen_view', { screen });
   }, [screen]);
-
-  useEffect(() => {
-    localStorage.setItem(LOCAL_PLAYER_STATS_KEY, JSON.stringify(playerStats));
-  }, [playerStats]);
-
-  useEffect(() => {
-    localStorage.setItem(LOCAL_LAST_LEVEL_KEY, String(level));
-  }, [level]);
 
   useEffect(() => {
     if (!consent) return;
@@ -1238,18 +1245,14 @@ export default function App() {
 
   const markLevelComplete = useCallback((lvl: number) => {
     setCompletedLevels(prev => {
-      const next = new Set([...prev, lvl]);
-      localStorage.setItem(LOCAL_COMPLETED_KEY, JSON.stringify([...next]));
-      return next;
+      return new Set([...prev, lvl]);
     });
   }, []);
 
   const saveBestTime = useCallback((lvl: number, remaining: number) => {
     setBestTimes(prev => {
       if (prev[lvl] !== undefined && prev[lvl] >= remaining) return prev;
-      const next = { ...prev, [lvl]: remaining };
-      localStorage.setItem(LOCAL_BEST_TIMES_KEY, JSON.stringify(next));
-      return next;
+      return { ...prev, [lvl]: remaining };
     });
   }, []);
 
