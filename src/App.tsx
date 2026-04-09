@@ -814,9 +814,7 @@ function AccountPanel({
       <div className="bg-white border border-black/10 rounded-3xl shadow-xl p-4">
         <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Cloud Profile</p>
 
-        {authLoading ? (
-          <p className="text-sm text-gray-600">Checking session...</p>
-        ) : user ? (
+        {user ? (
           <>
             <p className="text-sm text-gray-600 mb-1">Signed in as</p>
             <p className="text-base font-black text-black">{user.displayName}</p>
@@ -833,13 +831,15 @@ function AccountPanel({
           </>
         ) : (
           <>
+            {authLoading && (
+              <p className="text-xs text-gray-500 mb-2">Checking previous session...</p>
+            )}
             <p className="text-sm text-gray-600 mb-3">
               Sign in to keep levels and stats across devices.
             </p>
             <button
               onClick={onGuestLogin}
-              disabled={authLoading}
-              className="w-full py-2.5 rounded-xl bg-black text-white text-sm font-bold hover:bg-gray-800 transition-all mb-2 disabled:opacity-60"
+              className="w-full py-2.5 rounded-xl bg-black text-white text-sm font-bold hover:bg-gray-800 transition-all mb-2"
             >
               Continue as Guest
             </button>
@@ -890,8 +890,7 @@ function AccountPanel({
               />
               <button
                 onClick={submitEmail}
-                disabled={authLoading}
-                className="w-full py-2 rounded-lg bg-black text-white text-xs font-bold hover:bg-gray-800 transition-all disabled:opacity-60"
+                className="w-full py-2 rounded-lg bg-black text-white text-xs font-bold hover:bg-gray-800 transition-all"
               >
                 {emailMode === 'register' ? 'Create with Email' : 'Sign In with Email'}
               </button>
