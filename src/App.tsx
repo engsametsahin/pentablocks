@@ -293,6 +293,7 @@ function authErrorToMessage(error: unknown) {
     challenge_closed: 'This challenge is already closed.',
     challenge_forbidden: 'You are not a participant in this challenge.',
     challenge_waiting_for_opponent: 'Waiting for opponent to join before starting.',
+    challenge_waiting_for_other_player: 'Waiting for the other player to press Play.',
     challenge_full: 'This challenge already has two players.',
     challenge_start_failed: 'Could not start challenge. Please try again.',
     challenge_create_failed: 'Could not create challenge. Please try again.',
@@ -727,7 +728,7 @@ function MultiplayerScreen({
   user: CloudUser | null;
   defaultLevel: number;
   onBack: () => void;
-  onStartChallenge: (snapshot: MultiplayerChallengeSnapshot) => void;
+  onStartChallenge: (snapshot: MultiplayerChallengeSnapshot) => Promise<void>;
   onGuestBootstrap: () => Promise<boolean>;
   multiplayerStats: MultiplayerStats | null;
   onToast: (message: string, tone?: ToastTone) => void;
@@ -735,8 +736,10 @@ function MultiplayerScreen({
   const [levelId, setLevelId] = useState(defaultLevel);
   const [joinCode, setJoinCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
+  const [waitingForOtherReady, setWaitingForOtherReady] = useState(false);
 
   useEffect(() => {
     setLevelId(defaultLevel);
@@ -776,6 +779,7 @@ function MultiplayerScreen({
       const data = await createMultiplayerChallenge(levelId);
       setSnapshot(data);
       setJoinCode(data.challenge.code);
+      setWaitingForOtherReady(false);
       onToast(`Challenge ${data.challenge.code} created.`, 'success');
       trackEvent('multiplayer_challenge_created', { level: levelId, code: data.challenge.code });
     } catch (err) {
@@ -799,6 +803,7 @@ function MultiplayerScreen({
       const data = await joinMultiplayerChallenge(code);
       setSnapshot(data);
       setJoinCode(data.challenge.code);
+      setWaitingForOtherReady(false);
       onToast(`Joined challenge ${data.challenge.code}.`, 'success');
       trackEvent('multiplayer_challenge_joined', { code: data.challenge.code });
     } catch (err) {
@@ -815,8 +820,17 @@ function MultiplayerScreen({
       setLoading(true);
       setError(null);
       const data = await fetchMultiplayerChallenge(code);
-      setSnapshot({ challenge: data.challenge, players: data.players });
+      const nextSnapshot = { challenge: data.challenge, players: data.players };
+      setSnapshot(nextSnapshot);
       setJoinCode(data.challenge.code);
+      if (waitingForOtherReady && nextSnapshot.challenge.startAt) {
+        setLaunching(true);
+        try {
+          await onStartChallenge(nextSnapshot);
+        } finally {
+          setLaunching(false);
+        }
+      }
     } catch (err) {
       setError(authErrorToMessage(err));
     } finally {
@@ -833,6 +847,79 @@ function MultiplayerScreen({
       onToast('Copy failed. You can copy it manually.', 'warning');
     }
   };
+
+  const handleReadyAndPlay = async () => {
+    if (!snapshot) return;
+    const ready = await ensureMultiplayerAuth();
+    if (!ready) return;
+    try {
+      setLoading(true);
+      setError(null);
+      const started = await startMultiplayerChallenge(snapshot.challenge.code);
+      setSnapshot(started);
+      setJoinCode(started.challenge.code);
+      if (started.challenge.startAt) {
+        setWaitingForOtherReady(false);
+        setLaunching(true);
+        try {
+          await onStartChallenge(started);
+        } finally {
+          setLaunching(false);
+        }
+      } else {
+        setWaitingForOtherReady(true);
+        onToast('Waiting for the other player to press Play.', 'neutral');
+      }
+    } catch (err) {
+      const code = err instanceof Error ? err.message : '';
+      if (code === 'challenge_waiting_for_opponent' || code === 'challenge_waiting_for_other_player') {
+        setWaitingForOtherReady(true);
+        setError(null);
+        onToast(authErrorToMessage(err), 'neutral');
+      } else {
+        setError(authErrorToMessage(err));
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const code = snapshot?.challenge.code;
+    if (!waitingForOtherReady || !code) return;
+    let active = true;
+
+    const poll = async () => {
+      try {
+        const data = await fetchMultiplayerChallenge(code);
+        if (!active) return;
+        const nextSnapshot = { challenge: data.challenge, players: data.players };
+        setSnapshot(nextSnapshot);
+        setJoinCode(data.challenge.code);
+        if (nextSnapshot.challenge.startAt) {
+          setWaitingForOtherReady(false);
+          setLaunching(true);
+          try {
+            await onStartChallenge(nextSnapshot);
+          } finally {
+            if (active) setLaunching(false);
+          }
+        }
+      } catch {
+        // Keep waiting state; manual refresh is still available.
+      }
+    };
+
+    void poll();
+    const interval = window.setInterval(() => {
+      void poll();
+    }, 1200);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [onStartChallenge, snapshot?.challenge.code, waitingForOtherReady]);
 
   return (
     <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
@@ -930,6 +1017,7 @@ function MultiplayerScreen({
               <div className="flex gap-2">
                 <button
                   onClick={handleRefresh}
+                  disabled={loading || launching}
                   className="px-3 py-2 rounded-xl bg-white/10 text-xs font-bold hover:bg-white/20"
                 >
                   Refresh
@@ -941,13 +1029,20 @@ function MultiplayerScreen({
                   <Copy size={14} /> Copy Link
                 </button>
                 <button
-                  onClick={() => { void onStartChallenge(snapshot); }}
-                  className="px-3 py-2 rounded-xl bg-white text-black text-xs font-bold hover:bg-gray-100"
+                  onClick={() => { void handleReadyAndPlay(); }}
+                  disabled={loading || launching}
+                  className="px-3 py-2 rounded-xl bg-white text-black text-xs font-bold hover:bg-gray-100 disabled:opacity-60"
                 >
-                  Play Challenge
+                  {loading || launching ? 'Working...' : (waitingForOtherReady ? 'Waiting...' : 'Play Challenge')}
                 </button>
               </div>
             </div>
+
+            {waitingForOtherReady && !snapshot.challenge.startAt && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                You are ready. Waiting for the other player to press Play.
+              </div>
+            )}
 
             {shareLink && (
               <div className="mb-5 p-3 rounded-xl bg-white/6 text-xs text-gray-300 break-all">
@@ -1299,7 +1394,8 @@ export default function App() {
   const [isSolving, setIsSolving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isShowingSolution, setIsShowingSolution] = useState(false);
-  const [level, setLevel] = useState(1);
+  const [singlePlayerLevel, setSinglePlayerLevel] = useState(() => readLocalLastLevel());
+  const [level, setLevel] = useState(() => readLocalLastLevel());
   const [draggedPiece, setDraggedPiece] = useState<{ id: string; offset: Point } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [consent, setConsent] = useState<ConsentState | null>(() => {
@@ -1433,12 +1529,16 @@ export default function App() {
     playerStats: PlayerStats;
     lastLevel: number;
   }) => {
+    const normalizedLastLevel = Math.min(MAX_LEVEL, Math.max(1, payload.lastLevel));
     const nextCompleted = new Set<number>(payload.completedLevels);
     setCompletedLevels(nextCompleted);
     setBestTimes(payload.bestTimes);
     setPlayerStats(payload.playerStats);
-    setLevel(Math.min(MAX_LEVEL, Math.max(1, payload.lastLevel)));
-  }, []);
+    setSinglePlayerLevel(normalizedLastLevel);
+    if (gameMode !== 'multiplayer') {
+      setLevel(normalizedLastLevel);
+    }
+  }, [gameMode]);
 
   const clearLegacyLocalProgress = useCallback(() => {
     localStorage.removeItem(LOCAL_COMPLETED_KEY);
@@ -1451,6 +1551,7 @@ export default function App() {
     setCompletedLevels(new Set<number>());
     setBestTimes({});
     setPlayerStats({ ...DEFAULT_PLAYER_STATS });
+    setSinglePlayerLevel(1);
     setLevel(1);
   }, []);
 
@@ -1673,7 +1774,7 @@ export default function App() {
         completedLevels: [...completedLevels],
         bestTimes,
         playerStats,
-        lastLevel: level,
+        lastLevel: singlePlayerLevel,
       })
         .catch((error) => {
           setAuthError(authErrorToMessage(error));
@@ -1688,7 +1789,7 @@ export default function App() {
         window.clearTimeout(cloudSyncTimeoutRef.current);
       }
     };
-  }, [authUser, cloudReady, completedLevels, bestTimes, playerStats, level, gameMode]);
+  }, [authUser, cloudReady, completedLevels, bestTimes, playerStats, singlePlayerLevel, gameMode]);
 
   useEffect(() => {
     if (!isMultiplayerRound || !activeChallenge || !authUser) return;
@@ -1784,7 +1885,12 @@ export default function App() {
   ) => {
     const mode: GameMode = options?.mode ?? 'single';
     const levelToSet = typeof targetLevel === 'number' ? targetLevel : level;
-    if (typeof targetLevel === 'number') setLevel(targetLevel);
+    if (typeof targetLevel === 'number') {
+      setLevel(targetLevel);
+      if (mode === 'single') {
+        setSinglePlayerLevel(targetLevel);
+      }
+    }
     const cfg = LEVEL_CONFIGS[levelToSet - 1];
 
     setGameMode(mode);
@@ -2239,40 +2345,33 @@ export default function App() {
     setGameMode('single');
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
-    initGame(level, 'start', { mode: 'single' });
+    initGame(singlePlayerLevel, 'start', { mode: 'single' });
     setScreen('game');
-  }, [initGame, level]);
+  }, [initGame, singlePlayerLevel]);
 
   const startChallengeGame = useCallback(async (snapshot: MultiplayerChallengeSnapshot) => {
-    try {
-      const started = await startMultiplayerChallenge(snapshot.challenge.code);
-      const challengeState: ActiveChallengeState = {
-        code: started.challenge.code,
-        levelId: started.challenge.levelId,
-        puzzleSeed: started.challenge.puzzleSeed,
-        isRanked: started.challenge.isRanked,
-        startAt: started.challenge.startAt,
-        winnerUserId: started.challenge.winnerUserId,
-      };
-      setActiveChallenge(challengeState);
-      setMatchSnapshot(null);
-      setHasSubmittedMatchResult(false);
-      await initGame(started.challenge.levelId, 'start', {
-        mode: 'multiplayer',
-        puzzleSeed: started.challenge.puzzleSeed,
-        startAt: started.challenge.startAt,
-      });
-      setScreen('game');
-      if (started.challenge.startAt) {
-        const msLeft = Date.parse(started.challenge.startAt) - Date.now();
-        if (msLeft > 0) {
-          showToast(`Match starts in ${Math.ceil(msLeft / 1000)}s`, 'neutral');
-        }
+    const challengeState: ActiveChallengeState = {
+      code: snapshot.challenge.code,
+      levelId: snapshot.challenge.levelId,
+      puzzleSeed: snapshot.challenge.puzzleSeed,
+      isRanked: snapshot.challenge.isRanked,
+      startAt: snapshot.challenge.startAt,
+      winnerUserId: snapshot.challenge.winnerUserId,
+    };
+    setActiveChallenge(challengeState);
+    setMatchSnapshot(null);
+    setHasSubmittedMatchResult(false);
+    await initGame(snapshot.challenge.levelId, 'start', {
+      mode: 'multiplayer',
+      puzzleSeed: snapshot.challenge.puzzleSeed,
+      startAt: snapshot.challenge.startAt,
+    });
+    setScreen('game');
+    if (snapshot.challenge.startAt) {
+      const msLeft = Date.parse(snapshot.challenge.startAt) - Date.now();
+      if (msLeft > 0) {
+        showToast(`Match starts in ${Math.ceil(msLeft / 1000)}s`, 'neutral');
       }
-    } catch (error) {
-      const message = authErrorToMessage(error);
-      setAuthError(message);
-      showToast(message, 'warning');
     }
   }, [initGame, showToast]);
 
@@ -2282,7 +2381,7 @@ export default function App() {
       <>
         <MenuScreen
           onContinue={continueFromLastLevel}
-          continueLevel={level}
+          continueLevel={singlePlayerLevel}
           onSinglePlayer={() => setScreen('levelSelect')}
           onStats={() => setScreen('stats')}
           onMultiplayer={() => setScreen('multiplayer')}
@@ -2314,7 +2413,7 @@ export default function App() {
       <>
         <MultiplayerScreen
           user={authUser}
-          defaultLevel={level}
+          defaultLevel={singlePlayerLevel}
           onBack={() => setScreen('menu')}
           onStartChallenge={startChallengeGame}
           onGuestBootstrap={handleGuestLogin}

@@ -69,7 +69,8 @@ export interface MultiplayerChallengePlayer {
   displayName: string;
   provider: CloudUser['provider'];
   joinedAt: string;
-  status: 'joined' | 'submitted';
+  readyAt: string | null;
+  status: 'joined' | 'ready' | 'submitted';
   didWin: boolean | null;
   elapsedSeconds: number | null;
   remainingSeconds: number | null;

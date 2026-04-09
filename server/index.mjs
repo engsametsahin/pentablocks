@@ -248,12 +248,16 @@ function toChallengeDto(row) {
 }
 
 function toChallengePlayerDto(row) {
+  const status = row.status === 'submitted'
+    ? 'submitted'
+    : (row.ready_at ? 'ready' : 'joined');
   return {
     userId: row.user_id,
     displayName: row.display_name,
     provider: row.provider,
     joinedAt: row.joined_at,
-    status: row.status,
+    readyAt: row.ready_at,
+    status,
     didWin: row.did_win,
     elapsedSeconds: row.elapsed_seconds,
     remainingSeconds: row.remaining_seconds,
@@ -797,6 +801,14 @@ app.post('/api/multiplayer/challenges/:code/start', async (req, res) => {
     }
 
     if (!challenge.start_at) {
+      await pool.query(
+        `UPDATE multiplayer_challenge_players
+         SET ready_at = COALESCE(ready_at, NOW())
+         WHERE challenge_id = $1
+           AND user_id = $2`,
+        [challenge.id, user.id],
+      );
+
       const participantCount = await pool.query(
         `SELECT COUNT(*)::int AS count
          FROM multiplayer_challenge_players
@@ -808,11 +820,24 @@ app.post('/api/multiplayer/challenges/:code/start', async (req, res) => {
         return;
       }
 
+      const readyCount = await pool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM multiplayer_challenge_players
+         WHERE challenge_id = $1
+           AND ready_at IS NOT NULL`,
+        [challenge.id],
+      );
+      if (readyCount.rows[0].count < 2) {
+        res.status(409).json({ error: 'challenge_waiting_for_other_player' });
+        return;
+      }
+
       await pool.query(
         `UPDATE multiplayer_challenges
          SET start_at = NOW() + make_interval(secs => $2::int),
              updated_at = NOW()
-         WHERE id = $1`,
+         WHERE id = $1
+           AND start_at IS NULL`,
         [challenge.id, MATCH_START_DELAY_SECONDS],
       );
     }

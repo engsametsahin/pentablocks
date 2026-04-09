@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS multiplayer_challenge_players (
   challenge_id BIGINT NOT NULL REFERENCES multiplayer_challenges(id) ON DELETE CASCADE,
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ready_at TIMESTAMPTZ,
   status TEXT NOT NULL DEFAULT 'joined',
   did_win BOOLEAN,
   elapsed_seconds INTEGER,
@@ -135,6 +136,9 @@ CREATE TABLE IF NOT EXISTS multiplayer_challenge_players (
   submitted_at TIMESTAMPTZ,
   PRIMARY KEY (challenge_id, user_id)
 );
+
+ALTER TABLE multiplayer_challenge_players
+  ADD COLUMN IF NOT EXISTS ready_at TIMESTAMPTZ;
 
 DO $$
 BEGIN
