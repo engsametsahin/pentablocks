@@ -3,8 +3,10 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { setupGlobalErrorTracking } from './lib/errorTracking';
+import { initializeAnalytics } from './lib/analytics';
 
 setupGlobalErrorTracking();
+initializeAnalytics();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

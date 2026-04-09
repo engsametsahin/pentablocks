@@ -10,6 +10,7 @@ import { ALL_PIECES, Piece, Point, rotateShape, flipShape } from './constants';
 import { solveKatamino } from './solver';
 import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
+import { configureAdSensePreference, initializeAdSense } from './lib/adsense';
 import { fetchCloudProgress, fetchCurrentUser, saveCloudProgress, signInEmail, signInGoogle, signInGuest, signOutCloud, signUpEmail, type CloudUser } from './lib/cloud';
 import { mountGoogleLoginButton } from './lib/googleIdentity';
 import {
@@ -1787,6 +1788,12 @@ export default function App() {
   useEffect(() => {
     if (!consent) return;
     localStorage.setItem(CONSENT_KEY, JSON.stringify(consent));
+    configureAdSensePreference(consent.personalizedAds);
+    if (initializeAdSense(consent.personalizedAds)) {
+      trackEvent('adsense_initialized', {
+        personalized_ads: consent.personalizedAds,
+      });
+    }
   }, [consent]);
 
   useEffect(() => {
