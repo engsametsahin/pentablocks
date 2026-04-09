@@ -12,7 +12,16 @@ import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
 import { fetchCloudProgress, fetchCurrentUser, saveCloudProgress, signInEmail, signInGoogle, signInGuest, signOutCloud, signUpEmail, type CloudUser } from './lib/cloud';
 import { mountGoogleLoginButton } from './lib/googleIdentity';
-import { createMultiplayerChallenge, fetchMultiplayerChallenge, joinMultiplayerChallenge, type MultiplayerChallengeSnapshot } from './lib/multiplayer';
+import {
+  createMultiplayerChallenge,
+  fetchMultiplayerChallenge,
+  fetchMultiplayerStats,
+  joinMultiplayerChallenge,
+  startMultiplayerChallenge,
+  submitMultiplayerChallengeResult,
+  type MultiplayerChallengeSnapshot,
+  type MultiplayerStats,
+} from './lib/multiplayer';
 
 const CELL_SIZE = 45;
 const GRID_PADDING = 32; // p-8
@@ -33,6 +42,7 @@ const DEFAULT_PLAYER_STATS: PlayerStats = {
 };
 
 type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer';
+type GameMode = 'single' | 'multiplayer';
 
 type LevelFilter = 'all' | 'unlocked' | 'completed';
 type ToastTone = 'neutral' | 'success' | 'warning';
@@ -69,6 +79,15 @@ interface PlayerStats {
   restarts: number;
   hintsUsed: number;
   totalPlaySeconds: number;
+}
+
+interface ActiveChallengeState {
+  code: string;
+  levelId: number;
+  puzzleSeed: string;
+  isRanked: boolean;
+  startAt: string | null;
+  winnerUserId: number | null;
 }
 
 interface ConsentState {
@@ -171,6 +190,53 @@ function formatDuration(totalSeconds: number) {
   return `${seconds}s`;
 }
 
+function createSeededRng(seed: string) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return () => {
+    h += h << 13;
+    h ^= h >>> 7;
+    h += h << 3;
+    h ^= h >>> 17;
+    h += h << 5;
+    return (h >>> 0) / 4294967296;
+  };
+}
+
+function shuffleWithRng<T>(items: T[], rng: () => number) {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+function generateChallengePieces(seed: string, cfg: LevelConfig) {
+  const rng = createSeededRng(`${seed}:${cfg.id}`);
+  const p4 = ALL_PIECES.filter((p) => p.shape.length === 4);
+  const p3 = ALL_PIECES.filter((p) => p.shape.length === 3);
+  const p2 = ALL_PIECES.filter((p) => p.shape.length === 2);
+  const p1 = ALL_PIECES.filter((p) => p.shape.length === 1);
+
+  const pickCandidates = () => [
+    ...shuffleWithRng(p4, rng).slice(0, cfg.p4),
+    ...shuffleWithRng(p3, rng).slice(0, cfg.p3),
+    ...shuffleWithRng(p2, rng).slice(0, cfg.p2),
+    ...shuffleWithRng(p1, rng).slice(0, cfg.p1),
+  ];
+
+  for (let attempts = 0; attempts < 220; attempts += 1) {
+    const candidate = pickCandidates();
+    if (solveKatamino(cfg.width, cfg.height, candidate)) return candidate;
+  }
+
+  return pickCandidates();
+}
+
 function readLocalCompletedLevels() {
   try {
     const saved = localStorage.getItem(LOCAL_COMPLETED_KEY);
@@ -225,6 +291,10 @@ function authErrorToMessage(error: unknown) {
     unauthorized: 'Please sign in first to use cloud multiplayer.',
     challenge_not_found: 'Challenge code not found.',
     challenge_closed: 'This challenge is already closed.',
+    challenge_forbidden: 'You are not a participant in this challenge.',
+    challenge_waiting_for_opponent: 'Waiting for opponent to join before starting.',
+    challenge_full: 'This challenge already has two players.',
+    challenge_start_failed: 'Could not start challenge. Please try again.',
     challenge_create_failed: 'Could not create challenge. Please try again.',
     challenge_join_failed: 'Could not join challenge. Please try again.',
     challenge_fetch_failed: 'Could not load challenge details.',
@@ -302,7 +372,7 @@ function MenuScreen({
         transition={{ delay: 0.5 }}
         className="mt-20 text-gray-700 text-[10px] uppercase tracking-[0.2em] font-bold"
       >
-        Designed for Precision & Logic
+        A Game by TGS LABS
       </motion.p>
     </div>
   );
@@ -649,15 +719,17 @@ function MultiplayerScreen({
   user,
   defaultLevel,
   onBack,
-  onPlayLevel,
+  onStartChallenge,
   onGuestBootstrap,
+  multiplayerStats,
   onToast,
 }: {
   user: CloudUser | null;
   defaultLevel: number;
   onBack: () => void;
-  onPlayLevel: (level: number) => void;
+  onStartChallenge: (snapshot: MultiplayerChallengeSnapshot) => void;
   onGuestBootstrap: () => Promise<boolean>;
+  multiplayerStats: MultiplayerStats | null;
   onToast: (message: string, tone?: ToastTone) => void;
 }) {
   const [levelId, setLevelId] = useState(defaultLevel);
@@ -669,6 +741,12 @@ function MultiplayerScreen({
   useEffect(() => {
     setLevelId(defaultLevel);
   }, [defaultLevel]);
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('challenge');
+    if (!code) return;
+    setJoinCode(sanitizeCode(code));
+  }, []);
 
   const sanitizeCode = (raw: string) => raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
 
@@ -807,12 +885,6 @@ function MultiplayerScreen({
               >
                 {loading ? 'Working...' : 'Create Code'}
               </button>
-              <button
-                onClick={() => onPlayLevel(levelId)}
-                className="px-4 py-2.5 rounded-xl border border-black/10 text-sm font-bold hover:bg-gray-50"
-              >
-                Play
-              </button>
             </div>
           </div>
 
@@ -869,7 +941,7 @@ function MultiplayerScreen({
                   <Copy size={14} /> Copy Link
                 </button>
                 <button
-                  onClick={() => onPlayLevel(snapshot.challenge.levelId)}
+                  onClick={() => { void onStartChallenge(snapshot); }}
                   className="px-3 py-2 rounded-xl bg-white text-black text-xs font-bold hover:bg-gray-100"
                 >
                   Play Challenge
@@ -899,6 +971,32 @@ function MultiplayerScreen({
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {user && user.provider !== 'guest' && multiplayerStats && (
+          <div className="mt-6 bg-white rounded-3xl p-6 border border-black/5 shadow-sm">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Multiplayer Stats</p>
+            <div className="grid gap-2 md:grid-cols-4 text-sm">
+              <div className="rounded-xl bg-gray-50 px-3 py-2">
+                <p className="text-gray-500">Matches</p>
+                <p className="text-xl font-black">{multiplayerStats.matchesPlayed}</p>
+              </div>
+              <div className="rounded-xl bg-gray-50 px-3 py-2">
+                <p className="text-gray-500">Wins</p>
+                <p className="text-xl font-black">{multiplayerStats.wins}</p>
+              </div>
+              <div className="rounded-xl bg-gray-50 px-3 py-2">
+                <p className="text-gray-500">Losses</p>
+                <p className="text-xl font-black">{multiplayerStats.losses}</p>
+              </div>
+              <div className="rounded-xl bg-gray-50 px-3 py-2">
+                <p className="text-gray-500">Best Time</p>
+                <p className="text-xl font-black">
+                  {multiplayerStats.bestElapsedSeconds !== null ? `${multiplayerStats.bestElapsedSeconds}s` : '-'}
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -1223,6 +1321,13 @@ export default function App() {
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudReady, setCloudReady] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [gameMode, setGameMode] = useState<GameMode>('single');
+  const [activeChallenge, setActiveChallenge] = useState<ActiveChallengeState | null>(null);
+  const [multiplayerStats, setMultiplayerStats] = useState<MultiplayerStats | null>(null);
+  const [multiplayerLockedUntil, setMultiplayerLockedUntil] = useState<number | null>(null);
+  const [matchSnapshot, setMatchSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
+  const [hasSubmittedMatchResult, setHasSubmittedMatchResult] = useState(false);
+  const [nowTs, setNowTs] = useState(() => Date.now());
 
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{ x: number; y: number; id: string; isFromGrid: boolean; target: HTMLElement } | null>(null);
@@ -1237,6 +1342,11 @@ export default function App() {
   const gridHeight = config.height;
   const targetCells = gridWidth * gridHeight;
   const totalPiecesCount = config.p4 + config.p3 + config.p2 + config.p1;
+  const isMultiplayerRound = gameMode === 'multiplayer' && activeChallenge !== null;
+  const isMultiplayerLocked = isMultiplayerRound && multiplayerLockedUntil !== null && nowTs < multiplayerLockedUntil;
+  const multiplayerCountdownSeconds = isMultiplayerLocked && multiplayerLockedUntil !== null
+    ? Math.max(0, Math.ceil((multiplayerLockedUntil - nowTs) / 1000))
+    : 0;
 
   // Count only pieces fully inside the grid with no overlap
   const seatedPiecesCount = (() => {
@@ -1398,6 +1508,12 @@ export default function App() {
       setAuthUser(null);
       setCloudReady(false);
       setAuthError(null);
+      setMultiplayerStats(null);
+      setActiveChallenge(null);
+      setGameMode('single');
+      setMatchSnapshot(null);
+      setHasSubmittedMatchResult(false);
+      setMultiplayerLockedUntil(null);
       resetProgressToDefaults();
       clearLegacyLocalProgress();
       showToast('Signed out. Progress reset to Level 1 on this device.', 'neutral');
@@ -1481,12 +1597,34 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (!authUser || authUser.provider === 'guest') {
+        setMultiplayerStats(null);
+        return;
+      }
+      try {
+        const payload = await fetchMultiplayerStats();
+        if (!active) return;
+        setMultiplayerStats(payload.stats);
+      } catch {
+        if (!active) return;
+        setMultiplayerStats(null);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [authUser]);
+
+  useEffect(() => {
     if (!consent) return;
     localStorage.setItem(CONSENT_KEY, JSON.stringify(consent));
   }, [consent]);
 
   useEffect(() => {
-    if (!authUser || !cloudReady) return;
+    if (!authUser || !cloudReady || gameMode !== 'single') return;
 
     if (cloudSyncTimeoutRef.current) {
       window.clearTimeout(cloudSyncTimeoutRef.current);
@@ -1513,7 +1651,50 @@ export default function App() {
         window.clearTimeout(cloudSyncTimeoutRef.current);
       }
     };
-  }, [authUser, cloudReady, completedLevels, bestTimes, playerStats, level]);
+  }, [authUser, cloudReady, completedLevels, bestTimes, playerStats, level, gameMode]);
+
+  useEffect(() => {
+    if (!isMultiplayerRound || !activeChallenge || !authUser) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const latest = await fetchMultiplayerChallenge(activeChallenge.code);
+        if (!active) return;
+        const normalized: ActiveChallengeState = {
+          code: latest.challenge.code,
+          levelId: latest.challenge.levelId,
+          puzzleSeed: latest.challenge.puzzleSeed,
+          isRanked: latest.challenge.isRanked,
+          startAt: latest.challenge.startAt,
+          winnerUserId: latest.challenge.winnerUserId,
+        };
+        setActiveChallenge(normalized);
+        setMatchSnapshot({ challenge: latest.challenge, players: latest.players });
+
+        const winnerId = latest.challenge.winnerUserId;
+        if (winnerId && winnerId !== authUser.id && !isWin && !isGameOver) {
+          setIsActive(false);
+          setIsGameOver(true);
+          showToast('Opponent finished first.', 'warning');
+          if (!hasSubmittedMatchResult) {
+            void submitChallengeResult(false);
+          }
+        }
+      } catch {
+        // Polling errors should not disrupt local play loop.
+      }
+    };
+
+    void poll();
+    const interval = window.setInterval(() => {
+      void poll();
+    }, 1500);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [isMultiplayerRound, activeChallenge, authUser, isWin, isGameOver, hasSubmittedMatchResult, submitChallengeResult, showToast]);
 
   const markLevelComplete = useCallback((lvl: number) => {
     setCompletedLevels(prev => {
@@ -1559,16 +1740,26 @@ export default function App() {
     return true;
   }, [draggedPiece, placedPieces, gridWidth, gridHeight]);
 
-  const initGame = useCallback(async (targetLevel?: number, reason: 'start' | 'restart' | 'next' = 'start') => {
+  const initGame = useCallback(async (
+    targetLevel?: number,
+    reason: 'start' | 'restart' | 'next' = 'start',
+    options?: { mode?: GameMode; puzzleSeed?: string; startAt?: string | null },
+  ) => {
+    const mode: GameMode = options?.mode ?? 'single';
     const levelToSet = typeof targetLevel === 'number' ? targetLevel : level;
     if (typeof targetLevel === 'number') setLevel(targetLevel);
     const cfg = LEVEL_CONFIGS[levelToSet - 1];
 
-    updatePlayerStats((prev) => ({
-      ...prev,
-      gamesStarted: prev.gamesStarted + 1,
-      restarts: prev.restarts + (reason === 'restart' ? 1 : 0),
-    }));
+    setGameMode(mode);
+    setHasSubmittedMatchResult(false);
+    setMatchSnapshot(null);
+    if (mode === 'single') {
+      updatePlayerStats((prev) => ({
+        ...prev,
+        gamesStarted: prev.gamesStarted + 1,
+        restarts: prev.restarts + (reason === 'restart' ? 1 : 0),
+      }));
+    }
 
     setIsGenerating(true);
     setIsActive(false);
@@ -1577,12 +1768,33 @@ export default function App() {
     setIsShowingSolution(false);
     setPlacedPieces([]);
     setSelectedPieceId(null);
-    setTimeLeft(cfg.timeSeconds);
-    levelStartRef.current = Date.now();
-    if (reason !== 'next') {
+    const startAtMsRaw = options?.startAt ? Date.parse(options.startAt) : NaN;
+    const hasStartAt = Number.isFinite(startAtMsRaw);
+    const effectiveStartMs = hasStartAt ? startAtMsRaw : Date.now();
+    const elapsedFromStart = Math.max(0, Math.floor((Date.now() - effectiveStartMs) / 1000));
+    const initialTimeLeft = mode === 'multiplayer'
+      ? Math.max(0, cfg.timeSeconds - elapsedFromStart)
+      : cfg.timeSeconds;
+    setTimeLeft(initialTimeLeft);
+    levelStartRef.current = effectiveStartMs;
+    if (mode === 'single' && reason !== 'next') {
       setAdBreakLevel(null);
       setQueuedNextLevel(null);
       setIsAdBreakVisible(false);
+    }
+    if (mode === 'multiplayer') {
+      setNowTs(Date.now());
+      if (hasStartAt) {
+        setMultiplayerLockedUntil(startAtMsRaw);
+        if (startAtMsRaw <= Date.now()) {
+          setIsActive(initialTimeLeft > 0);
+        }
+      } else {
+        setMultiplayerLockedUntil(null);
+        setIsActive(initialTimeLeft > 0);
+      }
+    } else {
+      setMultiplayerLockedUntil(null);
     }
 
     trackEvent('level_start', {
@@ -1590,51 +1802,116 @@ export default function App() {
       reason,
       board: `${cfg.width}x${cfg.height}`,
       time_limit: cfg.timeSeconds,
+      mode,
     });
 
     await new Promise(resolve => setTimeout(resolve, 50));
 
     let solvablePieces: Piece[] = [];
-    let attempts = 0;
-    const maxAttempts = 100;
+    if (mode === 'multiplayer' && options?.puzzleSeed) {
+      solvablePieces = generateChallengePieces(options.puzzleSeed, cfg);
+    } else {
+      let attempts = 0;
+      const maxAttempts = 100;
 
-    const p4 = ALL_PIECES.filter(p => p.shape.length === 4);
-    const p3 = ALL_PIECES.filter(p => p.shape.length === 3);
-    const p2 = ALL_PIECES.filter(p => p.shape.length === 2);
-    const p1 = ALL_PIECES.filter(p => p.shape.length === 1);
+      const p4 = ALL_PIECES.filter(p => p.shape.length === 4);
+      const p3 = ALL_PIECES.filter(p => p.shape.length === 3);
+      const p2 = ALL_PIECES.filter(p => p.shape.length === 2);
+      const p1 = ALL_PIECES.filter(p => p.shape.length === 1);
 
-    const currentWidth = cfg.width;
-    const currentHeight = cfg.height;
+      const currentWidth = cfg.width;
+      const currentHeight = cfg.height;
 
-    const pickCandidates = () => [
-      ...[...p4].sort(() => Math.random() - 0.5).slice(0, cfg.p4),
-      ...[...p3].sort(() => Math.random() - 0.5).slice(0, cfg.p3),
-      ...[...p2].sort(() => Math.random() - 0.5).slice(0, cfg.p2),
-      ...[...p1].sort(() => Math.random() - 0.5).slice(0, cfg.p1),
-    ];
+      const pickCandidates = () => [
+        ...[...p4].sort(() => Math.random() - 0.5).slice(0, cfg.p4),
+        ...[...p3].sort(() => Math.random() - 0.5).slice(0, cfg.p3),
+        ...[...p2].sort(() => Math.random() - 0.5).slice(0, cfg.p2),
+        ...[...p1].sort(() => Math.random() - 0.5).slice(0, cfg.p1),
+      ];
 
-    while (attempts < maxAttempts) {
-      const candidatePieces = pickCandidates();
-      const solution = solveKatamino(currentWidth, currentHeight, candidatePieces);
-      if (solution) {
-        solvablePieces = candidatePieces;
-        break;
+      while (attempts < maxAttempts) {
+        const candidatePieces = pickCandidates();
+        const solution = solveKatamino(currentWidth, currentHeight, candidatePieces);
+        if (solution) {
+          solvablePieces = candidatePieces;
+          break;
+        }
+        attempts++;
       }
-      attempts++;
-    }
 
-    if (solvablePieces.length === 0) {
-      let fallback: Piece[] | null = null;
-      for (let i = 0; i < 200 && !fallback; i++) {
-        const cands = pickCandidates();
-        if (solveKatamino(currentWidth, currentHeight, cands)) fallback = cands;
+      if (solvablePieces.length === 0) {
+        let fallback: Piece[] | null = null;
+        for (let i = 0; i < 200 && !fallback; i++) {
+          const cands = pickCandidates();
+          if (solveKatamino(currentWidth, currentHeight, cands)) fallback = cands;
+        }
+        solvablePieces = fallback ?? pickCandidates();
       }
-      solvablePieces = fallback ?? pickCandidates();
     }
 
     setAvailablePieces(solvablePieces);
     setIsGenerating(false);
   }, [level, updatePlayerStats]);
+
+  useEffect(() => {
+    if (!isMultiplayerRound || multiplayerLockedUntil === null) return;
+    const msLeft = multiplayerLockedUntil - Date.now();
+    if (msLeft <= 0) {
+      setMultiplayerLockedUntil(null);
+      setIsActive(timeLeft > 0);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setMultiplayerLockedUntil(null);
+      setIsActive(timeLeft > 0);
+    }, msLeft);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isMultiplayerRound, multiplayerLockedUntil, timeLeft]);
+
+  useEffect(() => {
+    if (!isMultiplayerLocked) return;
+    const interval = window.setInterval(() => {
+      setNowTs(Date.now());
+    }, 250);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [isMultiplayerLocked]);
+
+  const submitChallengeResult = useCallback(async (didWin: boolean, remainingOverride?: number) => {
+    if (!activeChallenge || hasSubmittedMatchResult) return null;
+    const elapsedSeconds = Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000));
+    const remainingSeconds = Math.max(0, Math.floor(remainingOverride ?? timeLeft));
+    try {
+      const snapshot = await submitMultiplayerChallengeResult(activeChallenge.code, {
+        didWin,
+        elapsedSeconds,
+        remainingSeconds,
+      });
+      setHasSubmittedMatchResult(true);
+      setMatchSnapshot(snapshot);
+      setActiveChallenge({
+        code: snapshot.challenge.code,
+        levelId: snapshot.challenge.levelId,
+        puzzleSeed: snapshot.challenge.puzzleSeed,
+        isRanked: snapshot.challenge.isRanked,
+        startAt: snapshot.challenge.startAt,
+        winnerUserId: snapshot.challenge.winnerUserId,
+      });
+      if (authUser && authUser.provider !== 'guest') {
+        const payload = await fetchMultiplayerStats();
+        setMultiplayerStats(payload.stats);
+      }
+      return snapshot;
+    } catch (error) {
+      setAuthError(authErrorToMessage(error));
+      return null;
+    }
+  }, [activeChallenge, authUser, hasSubmittedMatchResult, timeLeft]);
 
   // Timer
   useEffect(() => {
@@ -1642,20 +1919,27 @@ export default function App() {
     if (isActive && timeLeft > 0 && !isWin && !isShowingSolution && !isSolving && !isGenerating) {
       interval = setInterval(() => {
         setTimeLeft((prev) => prev - 1);
-        updatePlayerStats((prev) => ({ ...prev, totalPlaySeconds: prev.totalPlaySeconds + 1 }));
+        if (gameMode === 'single') {
+          updatePlayerStats((prev) => ({ ...prev, totalPlaySeconds: prev.totalPlaySeconds + 1 }));
+        }
       }, 1000);
     } else if (timeLeft === 0 && !isWin && !isGameOver && !isShowingSolution && !isSolving && !isGenerating) {
       setIsGameOver(true);
       setIsActive(false);
-      updatePlayerStats((prev) => ({ ...prev, losses: prev.losses + 1 }));
+      if (gameMode === 'single') {
+        updatePlayerStats((prev) => ({ ...prev, losses: prev.losses + 1 }));
+      } else {
+        void submitChallengeResult(false, 0);
+      }
       trackEvent('level_failed', {
         level,
         reason: 'timeout',
+        mode: gameMode,
         elapsed_seconds: Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000)),
       });
     }
     return () => clearInterval(interval);
-  }, [isActive, timeLeft, isWin, isGameOver, isShowingSolution, isSolving, isGenerating, updatePlayerStats, showToast, level]);
+  }, [isActive, timeLeft, isWin, isGameOver, isShowingSolution, isSolving, isGenerating, updatePlayerStats, showToast, level, gameMode, submitChallengeResult]);
 
   // Win condition
   useEffect(() => {
@@ -1683,19 +1967,24 @@ export default function App() {
         setIsActive(false);
         setSelectedPieceId(null);
         setDraggedPiece(null);
-        markLevelComplete(level);
-        saveBestTime(level, timeLeft);
-        updatePlayerStats((prev) => ({ ...prev, wins: prev.wins + 1 }));
+        if (gameMode === 'single') {
+          markLevelComplete(level);
+          saveBestTime(level, timeLeft);
+          updatePlayerStats((prev) => ({ ...prev, wins: prev.wins + 1 }));
+        } else {
+          void submitChallengeResult(true);
+        }
         trackEvent('level_completed', {
           level,
           time_left: timeLeft,
           elapsed_seconds: elapsedSeconds,
+          mode: gameMode,
           new_best: isNewBest,
         });
-        if (isNewBest) {
+        if (gameMode === 'single' && isNewBest) {
           showToast('New best time recorded.', 'success');
         }
-        if (level < MAX_LEVEL) {
+        if (gameMode === 'single' && level < MAX_LEVEL) {
           setCompletedThisSession((prev) => {
             const next = prev + 1;
             const shouldShowAdBreak = !isFirstSession && next % AD_BREAK_INTERVAL === 0;
@@ -1713,7 +2002,7 @@ export default function App() {
         }
       }
     }
-  }, [placedPieces, isShowingSolution, isGameOver, totalPiecesCount, gridWidth, gridHeight, targetCells, level, timeLeft, markLevelComplete, saveBestTime, updatePlayerStats, showToast, completedLevels, bestTimes, isFirstSession]);
+  }, [placedPieces, isShowingSolution, isGameOver, totalPiecesCount, gridWidth, gridHeight, targetCells, level, timeLeft, markLevelComplete, saveBestTime, updatePlayerStats, showToast, completedLevels, bestTimes, isFirstSession, gameMode, submitChallengeResult]);
 
   const handleRotate = useCallback((id: string) => {
     setPlacedPieces((prev) => {
@@ -1787,6 +2076,10 @@ export default function App() {
 
   const handlePointerDown = (clientX: number, clientY: number, id: string, isFromGrid: boolean, target: HTMLElement) => {
     if (isGameOver || isWin) return;
+    if (isMultiplayerLocked) {
+      showToast('Match will start together after countdown.', 'neutral');
+      return;
+    }
     if (!isActive) setIsActive(true);
     setSelectedPieceId(id);
 
@@ -1865,6 +2158,10 @@ export default function App() {
   };
 
   const handleShowSolution = () => {
+    if (gameMode === 'multiplayer') {
+      showToast('Solutions are disabled in multiplayer.', 'warning');
+      return;
+    }
     trackEvent('solution_requested', { level, from_game_over: isGameOver });
     setIsSolving(true);
     setIsActive(false);
@@ -1889,7 +2186,14 @@ export default function App() {
     }, 100);
   };
 
-  const goToLevelSelect = () => { setIsActive(false); setScreen('levelSelect'); };
+  const goToLevelSelect = () => {
+    setIsActive(false);
+    if (gameMode === 'multiplayer') {
+      setScreen('multiplayer');
+      return;
+    }
+    setScreen('levelSelect');
+  };
 
   const handleNextLevel = useCallback(() => {
     const nextLevel = level + 1;
@@ -1916,14 +2220,55 @@ export default function App() {
   }, [queuedNextLevel, initGame]);
 
   const startLevel = useCallback((lvl: number) => {
-    initGame(lvl, 'start');
+    setActiveChallenge(null);
+    setGameMode('single');
+    setMatchSnapshot(null);
+    setHasSubmittedMatchResult(false);
+    initGame(lvl, 'start', { mode: 'single' });
     setScreen('game');
   }, [initGame]);
 
   const continueFromLastLevel = useCallback(() => {
-    initGame(level, 'start');
+    setActiveChallenge(null);
+    setGameMode('single');
+    setMatchSnapshot(null);
+    setHasSubmittedMatchResult(false);
+    initGame(level, 'start', { mode: 'single' });
     setScreen('game');
   }, [initGame, level]);
+
+  const startChallengeGame = useCallback(async (snapshot: MultiplayerChallengeSnapshot) => {
+    try {
+      const started = await startMultiplayerChallenge(snapshot.challenge.code);
+      const challengeState: ActiveChallengeState = {
+        code: started.challenge.code,
+        levelId: started.challenge.levelId,
+        puzzleSeed: started.challenge.puzzleSeed,
+        isRanked: started.challenge.isRanked,
+        startAt: started.challenge.startAt,
+        winnerUserId: started.challenge.winnerUserId,
+      };
+      setActiveChallenge(challengeState);
+      setMatchSnapshot(null);
+      setHasSubmittedMatchResult(false);
+      await initGame(started.challenge.levelId, 'start', {
+        mode: 'multiplayer',
+        puzzleSeed: started.challenge.puzzleSeed,
+        startAt: started.challenge.startAt,
+      });
+      setScreen('game');
+      if (started.challenge.startAt) {
+        const msLeft = Date.parse(started.challenge.startAt) - Date.now();
+        if (msLeft > 0) {
+          showToast(`Match starts in ${Math.ceil(msLeft / 1000)}s`, 'neutral');
+        }
+      }
+    } catch (error) {
+      const message = authErrorToMessage(error);
+      setAuthError(message);
+      showToast(message, 'warning');
+    }
+  }, [initGame, showToast]);
 
   // ── Screen routing ──
   if (screen === 'menu') {
@@ -1965,8 +2310,9 @@ export default function App() {
           user={authUser}
           defaultLevel={level}
           onBack={() => setScreen('menu')}
-          onPlayLevel={startLevel}
+          onStartChallenge={startChallengeGame}
           onGuestBootstrap={handleGuestLogin}
+          multiplayerStats={multiplayerStats}
           onToast={showToast}
         />
         {!consent && (
@@ -2037,7 +2383,7 @@ export default function App() {
           <button
             onClick={goToLevelSelect}
             className="p-3 bg-white border border-black/10 rounded-xl hover:bg-gray-100 transition-all active:scale-95"
-            aria-label="Back to level select"
+            aria-label={gameMode === 'multiplayer' ? 'Back to multiplayer' : 'Back to level select'}
           >
             <ChevronLeft size={20} />
           </button>
@@ -2047,6 +2393,11 @@ export default function App() {
               <span className={cn('text-white text-[10px] font-bold px-2 py-0.5 rounded-full', tier.dot)}>
                 LV.{level} {config.label.toUpperCase()}
               </span>
+              {gameMode === 'multiplayer' && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black text-white">
+                  MULTIPLAYER
+                </span>
+              )}
               <span className="text-[10px] text-gray-400 font-bold">{level}/{MAX_LEVEL}</span>
             </div>
           </div>
@@ -2071,9 +2422,16 @@ export default function App() {
           <div className="w-px h-10 bg-gray-100" />
 
           <button
-            onClick={() => initGame(undefined, 'restart')}
-            className="p-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-all active:scale-95"
+            onClick={() => {
+              if (gameMode === 'multiplayer') {
+                showToast('Restart is disabled in multiplayer races.', 'warning');
+                return;
+              }
+              void initGame(undefined, 'restart', { mode: 'single' });
+            }}
+            className="p-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-all active:scale-95 disabled:opacity-40"
             aria-label="Start a new game"
+            disabled={gameMode === 'multiplayer'}
           >
             <RefreshCw size={20} />
           </button>
@@ -2276,6 +2634,19 @@ export default function App() {
           </motion.div>
         )}
 
+        {isMultiplayerLocked && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/45 backdrop-blur-sm z-55 flex items-center justify-center p-4"
+          >
+            <div className="bg-white p-10 rounded-[40px] shadow-2xl max-w-sm w-full text-center">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Multiplayer Start</p>
+              <h2 className="text-4xl font-black mb-2">{multiplayerCountdownSeconds}</h2>
+              <p className="text-sm text-gray-500">Get ready. Both players start together.</p>
+            </div>
+          </motion.div>
+        )}
+
         {!isShowingSolution && (isGameOver || isWin) && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -2285,7 +2656,52 @@ export default function App() {
               initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }}
               className="bg-white p-12 rounded-[48px] shadow-2xl max-w-md w-full text-center"
             >
-              {isWin ? (
+              {gameMode === 'multiplayer' ? (
+                <>
+                  <div className={cn('w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6', isWin ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600')}>
+                    {isWin ? <Trophy size={48} /> : <Timer size={48} />}
+                  </div>
+                  <h2 className="text-4xl font-bold mb-2">{isWin ? 'You Won!' : 'Match Finished'}</h2>
+                  <p className="text-gray-500 mb-2">
+                    {activeChallenge?.isRanked ? 'Ranked challenge' : 'Unranked challenge'} • Code {activeChallenge?.code}
+                  </p>
+                  {!isWin && activeChallenge?.winnerUserId && (
+                    <p className="text-sm text-red-500 mb-4">Opponent finished first.</p>
+                  )}
+
+                  <div className="bg-gray-50 border border-black/10 rounded-2xl p-4 text-left mb-6">
+                    <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Match Times</p>
+                    <div className="space-y-2 text-sm">
+                      {(matchSnapshot?.players ?? []).map((player) => (
+                        <div key={player.userId} className="flex items-center justify-between">
+                          <span className="font-bold text-gray-700">{player.displayName}</span>
+                          <span className="text-gray-500">
+                            {player.elapsedSeconds !== null ? `${player.elapsedSeconds}s` : 'No finish'}
+                          </span>
+                        </div>
+                      ))}
+                      {(matchSnapshot?.players ?? []).length === 0 && (
+                        <p className="text-gray-500">Waiting for final scores...</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    <button
+                      onClick={() => setScreen('multiplayer')}
+                      className="w-full py-4 bg-black text-white rounded-2xl font-bold hover:bg-gray-800 transition-all"
+                    >
+                      Back to Multiplayer
+                    </button>
+                    <button
+                      onClick={() => setScreen('menu')}
+                      className="w-full py-3 border-2 border-gray-200 rounded-2xl font-bold text-gray-500 hover:border-gray-400 transition-all text-sm"
+                    >
+                      Main Menu
+                    </button>
+                  </div>
+                </>
+              ) : isWin ? (
                 <>
                   <div className={cn('w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6', level === MAX_LEVEL ? 'bg-yellow-100 text-yellow-500' : 'bg-emerald-100 text-emerald-600')}>
                     <Trophy size={48} />
@@ -2378,7 +2794,7 @@ export default function App() {
       )}
 
       <div className="mt-auto pt-12 text-gray-400 text-[10px] uppercase tracking-[0.2em] font-bold">
-        Designed for Precision & Logic
+        A Game by TGS LABS
       </div>
     </div>
   );

@@ -80,8 +80,12 @@ CREATE TABLE IF NOT EXISTS multiplayer_challenges (
   code TEXT NOT NULL UNIQUE,
   created_by_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   level_id INTEGER NOT NULL,
+  puzzle_seed TEXT NOT NULL DEFAULT '',
   is_ranked BOOLEAN NOT NULL DEFAULT TRUE,
   status TEXT NOT NULL DEFAULT 'open',
+  start_at TIMESTAMPTZ,
+  winner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  ended_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   closed_at TIMESTAMPTZ
@@ -89,6 +93,14 @@ CREATE TABLE IF NOT EXISTS multiplayer_challenges (
 
 ALTER TABLE multiplayer_challenges
   ADD COLUMN IF NOT EXISTS is_ranked BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE multiplayer_challenges
+  ADD COLUMN IF NOT EXISTS puzzle_seed TEXT NOT NULL DEFAULT '';
+ALTER TABLE multiplayer_challenges
+  ADD COLUMN IF NOT EXISTS start_at TIMESTAMPTZ;
+ALTER TABLE multiplayer_challenges
+  ADD COLUMN IF NOT EXISTS winner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE multiplayer_challenges
+  ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
 
 DO $$
 BEGIN
@@ -142,3 +154,13 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS multiplayer_challenge_players_user_idx
   ON multiplayer_challenge_players (user_id, joined_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_multiplayer_stats (
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  matches_played INTEGER NOT NULL DEFAULT 0,
+  wins INTEGER NOT NULL DEFAULT 0,
+  losses INTEGER NOT NULL DEFAULT 0,
+  total_play_seconds INTEGER NOT NULL DEFAULT 0,
+  best_elapsed_seconds INTEGER,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

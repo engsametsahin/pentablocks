@@ -48,8 +48,12 @@ export interface MultiplayerChallenge {
   id: number;
   code: string;
   levelId: number;
+  puzzleSeed: string;
   isRanked: boolean;
   status: 'open' | 'closed';
+  startAt: string | null;
+  winnerUserId: number | null;
+  endedAt: string | null;
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
@@ -77,6 +81,15 @@ export interface MultiplayerChallengeSnapshot {
   players: MultiplayerChallengePlayer[];
 }
 
+export interface MultiplayerStats {
+  matchesPlayed: number;
+  wins: number;
+  losses: number;
+  totalPlaySeconds: number;
+  bestElapsedSeconds: number | null;
+  updatedAt: string | null;
+}
+
 export async function createMultiplayerChallenge(levelId: number) {
   return request<MultiplayerChallengeSnapshot>('/api/multiplayer/challenges', {
     method: 'POST',
@@ -98,6 +111,13 @@ export async function joinMultiplayerChallenge(code: string) {
   );
 }
 
+export async function startMultiplayerChallenge(code: string) {
+  return request<MultiplayerChallengeSnapshot>(
+    `/api/multiplayer/challenges/${encodeURIComponent(code)}/start`,
+    { method: 'POST' },
+  );
+}
+
 export async function submitMultiplayerChallengeResult(
   code: string,
   payload: { didWin: boolean; elapsedSeconds: number; remainingSeconds: number },
@@ -109,4 +129,8 @@ export async function submitMultiplayerChallengeResult(
       body: JSON.stringify(payload),
     },
   );
+}
+
+export async function fetchMultiplayerStats() {
+  return request<{ stats: MultiplayerStats }>('/api/multiplayer/stats', { method: 'GET' });
 }
