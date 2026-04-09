@@ -756,6 +756,13 @@ function MultiplayerScreen({
   const shareLink = snapshot
     ? `${window.location.origin}/?challenge=${snapshot.challenge.code}`
     : null;
+  const readyTarget = 2;
+  const playerCount = snapshot?.players.length ?? 0;
+  const readyCount = snapshot?.players.filter((player) => player.status === 'ready' || player.status === 'submitted').length ?? 0;
+  const readyPercent = Math.round((Math.min(readyCount, readyTarget) / readyTarget) * 100);
+  const readinessLabel = playerCount < readyTarget
+    ? `Players ${playerCount}/${readyTarget}`
+    : `Ready ${readyCount}/${readyTarget}`;
 
   const canUseMultiplayer = Boolean(user);
 
@@ -1044,6 +1051,21 @@ function MultiplayerScreen({
               </div>
             )}
 
+            {!snapshot.challenge.startAt && (
+              <div className="mb-4 rounded-xl border border-white/15 bg-white/5 px-3 py-3">
+                <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.18em] text-gray-300 mb-2">
+                  <span>Pre-Match Ready</span>
+                  <span>{readinessLabel}</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-white/15 overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-400 rounded-full transition-all duration-300"
+                    style={{ width: `${readyPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             {shareLink && (
               <div className="mb-5 p-3 rounded-xl bg-white/6 text-xs text-gray-300 break-all">
                 {shareLink}
@@ -1055,7 +1077,13 @@ function MultiplayerScreen({
                 <div key={player.userId} className="rounded-2xl bg-white/6 px-4 py-3 flex items-center justify-between">
                   <div>
                     <p className="font-bold">{player.displayName}</p>
-                    <p className="text-xs text-gray-400">{player.provider} • {player.status}</p>
+                    <p className="text-xs text-gray-400">
+                      {player.provider}
+                      {' '}
+                      •
+                      {' '}
+                      {player.status === 'ready' ? 'Ready' : player.status === 'submitted' ? 'Finished' : 'Waiting'}
+                    </p>
                   </div>
                   <div className="text-right text-xs text-gray-300">
                     {player.elapsedSeconds !== null ? (

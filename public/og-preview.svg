@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">PentaBlocks</title>
+  <desc id="desc">Timed puzzle game with multiplayer challenge codes</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#060606" />
+      <stop offset="100%" stop-color="#101010" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#34d399" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)" />
+
+  <g opacity="0.2">
+    <rect x="72" y="70" width="48" height="48" rx="8" fill="#10b981" />
+    <rect x="124" y="70" width="48" height="48" rx="8" fill="#10b981" />
+    <rect x="176" y="70" width="48" height="48" rx="8" fill="#10b981" />
+    <rect x="176" y="122" width="48" height="48" rx="8" fill="#10b981" />
+  </g>
+
+  <g opacity="0.2">
+    <rect x="964" y="424" width="48" height="48" rx="8" fill="#60a5fa" />
+    <rect x="1016" y="424" width="48" height="48" rx="8" fill="#60a5fa" />
+    <rect x="1068" y="424" width="48" height="48" rx="8" fill="#60a5fa" />
+    <rect x="1068" y="476" width="48" height="48" rx="8" fill="#60a5fa" />
+  </g>
+
+  <text x="90" y="290" fill="#f3f4f6" font-size="110" font-weight="800" font-family="Inter, Arial, sans-serif">PENTABLOCKS</text>
+  <rect x="90" y="322" width="500" height="8" rx="4" fill="url(#accent)" />
+  <text x="90" y="390" fill="#d1d5db" font-size="42" font-weight="600" font-family="Inter, Arial, sans-serif">
+    Timed Puzzle Challenge
+  </text>
+  <text x="90" y="446" fill="#9ca3af" font-size="30" font-weight="500" font-family="Inter, Arial, sans-serif">
+    Single Player and Multiplayer Race Modes
+  </text>
+
+  <rect x="90" y="500" width="300" height="58" rx="29" fill="#10b981" />
+  <text x="240" y="538" text-anchor="middle" fill="#03120c" font-size="28" font-weight="800" font-family="Inter, Arial, sans-serif">
+    PLAY NOW
+  </text>
+</svg>

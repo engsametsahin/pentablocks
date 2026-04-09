@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="PentaBlocks icon">
+  <rect width="512" height="512" rx="96" fill="#0b0b0b" />
+  <rect x="88" y="88" width="96" height="96" rx="18" fill="#10b981" />
+  <rect x="192" y="88" width="96" height="96" rx="18" fill="#10b981" />
+  <rect x="296" y="88" width="96" height="96" rx="18" fill="#10b981" />
+  <rect x="296" y="192" width="96" height="96" rx="18" fill="#10b981" />
+  <text x="256" y="396" text-anchor="middle" fill="#e5e7eb" font-size="72" font-weight="800" font-family="Inter, Arial, sans-serif">PB</text>
+</svg>

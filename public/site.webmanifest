@@ -1,0 +1,17 @@
+{
+  "name": "PentaBlocks",
+  "short_name": "PentaBlocks",
+  "description": "Timed puzzle game with single-player progression and multiplayer challenge races.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
