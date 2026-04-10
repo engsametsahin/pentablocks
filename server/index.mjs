@@ -707,6 +707,76 @@ async function finalizeTimedOutRoomRoundIfNeeded(code) {
   }
 }
 
+async function syncReadyNextRoundIfNeeded(code) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const roomQuery = await client.query(
+      `SELECT *
+       FROM multiplayer_rooms
+       WHERE code = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [code],
+    );
+    if (roomQuery.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return;
+    }
+    const room = roomQuery.rows[0];
+    if (room.status !== 'in_progress' || room.current_round <= 0 || room.current_round >= room.total_rounds) {
+      await client.query('COMMIT');
+      return;
+    }
+
+    const currentRoundQuery = await client.query(
+      `SELECT *
+       FROM multiplayer_room_rounds
+       WHERE room_id = $1 AND round_number = $2
+       LIMIT 1
+       FOR UPDATE`,
+      [room.id, room.current_round],
+    );
+    if (currentRoundQuery.rows.length === 0) {
+      await client.query('COMMIT');
+      return;
+    }
+    const currentRound = currentRoundQuery.rows[0];
+    if (currentRound.status !== 'finished') {
+      await client.query('COMMIT');
+      return;
+    }
+
+    const targetRound = room.current_round + 1;
+    const playerCountQuery = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM multiplayer_room_players
+       WHERE room_id = $1`,
+      [room.id],
+    );
+    const readyCountQuery = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM multiplayer_room_players
+       WHERE room_id = $1
+         AND ready_for_round >= $2`,
+      [room.id, targetRound],
+    );
+    if (
+      playerCountQuery.rows[0].count >= ROOM_MIN_PLAYERS_TO_START
+      && readyCountQuery.rows[0].count >= playerCountQuery.rows[0].count
+    ) {
+      await startRoomRound(client, room, targetRound);
+    }
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('multiplayer ready sync error', error);
+  } finally {
+    client.release();
+  }
+}
+
 async function updateRegisteredMultiplayerStats(userId, didWin, elapsedSeconds) {
   await pool.query(
     `INSERT INTO user_multiplayer_stats (
@@ -1433,6 +1503,7 @@ app.get('/api/multiplayer/rooms/:code', async (req, res) => {
 
   try {
     await finalizeTimedOutRoomRoundIfNeeded(code);
+    await syncReadyNextRoundIfNeeded(code);
     const snapshot = await readRoomByCode(code);
     if (!snapshot) {
       res.status(404).json({ error: 'room_not_found' });
