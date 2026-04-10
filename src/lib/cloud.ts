@@ -105,6 +105,14 @@ export async function signInGuest(nickname?: string) {
   return payload.user;
 }
 
+export async function updateGuestNickname(nickname: string) {
+  const payload = await apiRequest<{ user: CloudUser }>('/api/auth/guest/nickname', {
+    method: 'PUT',
+    body: JSON.stringify({ nickname }),
+  });
+  return payload.user;
+}
+
 export async function signInGoogle(idToken: string) {
   const payload = await apiRequest<{ user: CloudUser }>('/api/auth/google', {
     method: 'POST',

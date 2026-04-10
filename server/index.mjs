@@ -121,6 +121,11 @@ function normalizeDisplayName(input, fallback = 'Guest') {
   return value.slice(0, 32);
 }
 
+function normalizeGuestDisplayName(input, fallback = 'Guest') {
+  const base = normalizeDisplayName(input, fallback).replace(/\s*\(guest\)\s*$/i, '').trim();
+  return normalizeDisplayName(`${base || 'Guest'} (Guest)`, 'Guest (Guest)');
+}
+
 function normalizeEmail(input) {
   if (typeof input !== 'string') return null;
   const value = input.trim().toLowerCase();
@@ -292,6 +297,10 @@ function toChallengePlayerDto(row) {
   const status = row.status === 'submitted'
     ? 'submitted'
     : (row.ready_at ? 'ready' : 'joined');
+  const didFinish = row.status === 'submitted' ? Boolean(row.did_win) : null;
+  const placement = row.status === 'submitted'
+    ? (row.did_win ? 1 : 2)
+    : null;
   return {
     userId: row.user_id,
     displayName: row.display_name,
@@ -300,6 +309,8 @@ function toChallengePlayerDto(row) {
     readyAt: row.ready_at,
     status,
     didWin: row.did_win,
+    didFinish,
+    placement,
     elapsedSeconds: row.elapsed_seconds,
     remainingSeconds: row.remaining_seconds,
     submittedAt: row.submitted_at,
@@ -1041,6 +1052,31 @@ app.get('/api/auth/me', async (req, res) => {
   } catch (error) {
     console.error('auth me error', error);
     res.status(500).json({ error: 'auth_me_failed' });
+  }
+});
+
+app.put('/api/auth/guest/nickname', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+  if (user.provider !== 'guest') {
+    res.status(403).json({ error: 'guest_only_operation' });
+    return;
+  }
+
+  const nickname = normalizeGuestDisplayName(req.body?.nickname, user.display_name ?? 'Guest');
+  try {
+    const updated = await pool.query(
+      `UPDATE users
+       SET display_name = $2,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [user.id, nickname],
+    );
+    res.json({ user: toUserDto(updated.rows[0]) });
+  } catch (error) {
+    console.error('guest nickname update error', error);
+    res.status(500).json({ error: 'guest_nickname_update_failed' });
   }
 });
 
@@ -1786,6 +1822,7 @@ app.post('/api/multiplayer/rooms/:code/submit', async (req, res) => {
   const roundNumberInput = Math.max(1, toSafeInt(req.body?.roundNumber, 1));
   const elapsedSeconds = Math.max(0, toSafeInt(req.body?.elapsedSeconds, 0));
   const remainingSeconds = Math.max(0, toSafeInt(req.body?.remainingSeconds, 0));
+  const didFinishInput = req.body?.didFinish !== false;
 
   const client = await pool.connect();
   try {
@@ -1860,13 +1897,13 @@ app.post('/api/multiplayer/rooms/:code/submit', async (req, res) => {
          did_finish,
          submitted_at
        )
-       VALUES ($1, $2, $3, $4, TRUE, NOW())
+       VALUES ($1, $2, $3, $4, $5, NOW())
        ON CONFLICT (round_id, user_id) DO UPDATE SET
          elapsed_seconds = EXCLUDED.elapsed_seconds,
          remaining_seconds = EXCLUDED.remaining_seconds,
-         did_finish = TRUE,
+         did_finish = EXCLUDED.did_finish,
          submitted_at = NOW()`,
-      [round.id, user.id, elapsedSeconds, remainingSeconds],
+      [round.id, user.id, elapsedSeconds, remainingSeconds, didFinishInput],
     );
 
     const playerCountQuery = await client.query(
@@ -1882,10 +1919,17 @@ app.post('/api/multiplayer/rooms/:code/submit', async (req, res) => {
       [round.id],
     );
 
-    const allSubmitted = submittedCountQuery.rows[0].count >= playerCountQuery.rows[0].count;
+    const playerCount = playerCountQuery.rows[0].count;
+    const submittedCount = submittedCountQuery.rows[0].count;
+    const allSubmitted = submittedCount >= playerCount;
+    const onePlayerLeftUnsubmitted = playerCount > 1 && submittedCount === (playerCount - 1);
 
     if (allSubmitted) {
       await finalizeRoomRound(client, room, round, false);
+    } else if (onePlayerLeftUnsubmitted) {
+      // If exactly one player is still unresolved, end the round immediately and mark that
+      // last player as DNF so everyone can move to the next round without dead time.
+      await finalizeRoomRound(client, room, round, true);
     } else {
       await client.query(
         `UPDATE multiplayer_rooms

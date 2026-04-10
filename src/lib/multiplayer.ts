@@ -72,6 +72,8 @@ export interface MultiplayerChallengePlayer {
   readyAt: string | null;
   status: 'joined' | 'ready' | 'submitted';
   didWin: boolean | null;
+  didFinish: boolean | null;
+  placement: number | null;
   elapsedSeconds: number | null;
   remainingSeconds: number | null;
   submittedAt: string | null;
@@ -238,7 +240,7 @@ export async function readyMultiplayerRoomNextRound(code: string) {
 
 export async function submitMultiplayerRoomRound(
   code: string,
-  payload: { roundNumber: number; elapsedSeconds: number; remainingSeconds: number },
+  payload: { roundNumber: number; elapsedSeconds: number; remainingSeconds: number; didFinish?: boolean },
 ) {
   return request<MultiplayerRoomSnapshot>(
     `/api/multiplayer/rooms/${encodeURIComponent(code)}/submit`,
