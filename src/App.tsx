@@ -1727,17 +1727,37 @@ export default function App() {
     const elapsedSeconds = Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000));
     const remainingSeconds = Math.max(0, Math.floor(remainingOverride ?? timeLeft));
     try {
-      const snapshot = activeRoom
-        ? mapRoomToMatchSnapshot(await submitMultiplayerRoomRound(activeRoom.code, {
+      let snapshot: MultiplayerChallengeSnapshot;
+      if (activeRoom) {
+        const roomSnapshot = await submitMultiplayerRoomRound(activeRoom.code, {
           roundNumber: activeRoom.roundNumber,
           elapsedSeconds,
           remainingSeconds,
-        }))
-        : await submitMultiplayerChallengeResult(activeChallenge.code, {
+        });
+        setActiveLeaderboard(
+          roomSnapshot.players.map((player) => ({
+            userId: player.userId,
+            displayName: player.displayName,
+            totalPoints: player.totalPoints,
+          })),
+        );
+        if (roomSnapshot.activeRound) {
+          setActiveRoom({
+            code: roomSnapshot.room.code,
+            totalRounds: roomSnapshot.room.totalRounds,
+            roundNumber: roomSnapshot.activeRound.roundNumber,
+            maxPlayers: roomSnapshot.room.maxPlayers,
+            championUserId: roomSnapshot.room.championUserId,
+          });
+        }
+        snapshot = mapRoomToMatchSnapshot(roomSnapshot);
+      } else {
+        snapshot = await submitMultiplayerChallengeResult(activeChallenge.code, {
           didWin,
           elapsedSeconds,
           remainingSeconds,
         });
+      }
       setHasSubmittedMatchResult(true);
       setMatchSnapshot(snapshot);
       setActiveChallenge({
@@ -2049,6 +2069,13 @@ export default function App() {
   async function launchMultiplayerRoundFromSnapshot(snapshot: MultiplayerRoomSnapshot) {
     const round = snapshot.activeRound;
     if (!round) return;
+    setActiveLeaderboard(
+      snapshot.players.map((player) => ({
+        userId: player.userId,
+        displayName: player.displayName,
+        totalPoints: player.totalPoints,
+      })),
+    );
     setActiveRoom({
       code: snapshot.room.code,
       totalRounds: snapshot.room.totalRounds,
@@ -2932,6 +2959,11 @@ export default function App() {
               {gameMode === 'multiplayer' && (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black text-white">
                   MULTIPLAYER
+                </span>
+              )}
+              {gameMode === 'multiplayer' && activeRoom && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500 text-white">
+                  ROUND {activeRoom.roundNumber}/{activeRoom.totalRounds}
                 </span>
               )}
               <span className="text-[10px] text-gray-400 font-bold">{level}/{MAX_LEVEL}</span>
