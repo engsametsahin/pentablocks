@@ -262,7 +262,7 @@ function sanitizeRoomDifficulty(input) {
   const normalized = typeof input === 'string'
     ? input.trim().toLowerCase().replace(/[\s-]+/g, '_')
     : '';
-  if (Object.hasOwn(ROOM_DIFFICULTY_START_LEVELS, normalized)) return normalized;
+  if (Object.prototype.hasOwnProperty.call(ROOM_DIFFICULTY_START_LEVELS, normalized)) return normalized;
   return 'moderate';
 }
 
