@@ -138,6 +138,8 @@ export interface MultiplayerRoomRound {
   levelId: number;
   puzzleSeed: string;
   startAt: string;
+  timeoutSeconds: number;
+  deadlineAt: string;
   status: 'active' | 'finished';
   endedAt: string | null;
   submissions: MultiplayerRoomSubmission[];

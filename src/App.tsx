@@ -1616,6 +1616,7 @@ export default function App() {
   const [multiplayerStats, setMultiplayerStats] = useState<MultiplayerStats | null>(null);
   const [multiplayerLockedUntil, setMultiplayerLockedUntil] = useState<number | null>(null);
   const [multiplayerRoundStartMs, setMultiplayerRoundStartMs] = useState<number | null>(null);
+  const [multiplayerRoundDeadlineMs, setMultiplayerRoundDeadlineMs] = useState<number | null>(null);
   const [matchSnapshot, setMatchSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
   const [hasSubmittedMatchResult, setHasSubmittedMatchResult] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
@@ -2097,6 +2098,8 @@ export default function App() {
       mode: 'multiplayer',
       puzzleSeed: round.puzzleSeed,
       startAt: round.startAt,
+      deadlineAt: round.deadlineAt,
+      timeoutSeconds: round.timeoutSeconds,
     });
     setScreen('game');
     const msLeft = Date.parse(round.startAt) - Date.now();
@@ -2250,7 +2253,13 @@ export default function App() {
   const initGame = useCallback(async (
     targetLevel?: number,
     reason: 'start' | 'restart' | 'next' = 'start',
-    options?: { mode?: GameMode; puzzleSeed?: string; startAt?: string | null },
+    options?: {
+      mode?: GameMode;
+      puzzleSeed?: string;
+      startAt?: string | null;
+      deadlineAt?: string | null;
+      timeoutSeconds?: number | null;
+    },
   ) => {
     const mode: GameMode = options?.mode ?? 'single';
     const levelToSet = typeof targetLevel === 'number' ? targetLevel : level;
@@ -2281,11 +2290,17 @@ export default function App() {
     setPlacedPieces([]);
     setSelectedPieceId(null);
     const startAtMsRaw = options?.startAt ? Date.parse(options.startAt) : NaN;
+    const deadlineAtMsRaw = options?.deadlineAt ? Date.parse(options.deadlineAt) : NaN;
     const hasStartAt = Number.isFinite(startAtMsRaw);
-    const effectiveStartMs = hasStartAt ? startAtMsRaw : Date.now();
+    const hasDeadlineAt = Number.isFinite(deadlineAtMsRaw);
+    const timeoutSeconds = Math.max(1, Number(options?.timeoutSeconds ?? cfg.timeSeconds));
+    const inferredStartMs = hasDeadlineAt ? (deadlineAtMsRaw - timeoutSeconds * 1000) : Date.now();
+    const effectiveStartMs = hasStartAt ? startAtMsRaw : inferredStartMs;
     const elapsedFromStart = Math.max(0, Math.floor((Date.now() - effectiveStartMs) / 1000));
     const initialTimeLeft = mode === 'multiplayer'
-      ? Math.max(0, cfg.timeSeconds - elapsedFromStart)
+      ? (hasDeadlineAt
+        ? Math.max(0, Math.floor((deadlineAtMsRaw - Date.now()) / 1000))
+        : Math.max(0, timeoutSeconds - elapsedFromStart))
       : cfg.timeSeconds;
     setTimeLeft(initialTimeLeft);
     levelStartRef.current = effectiveStartMs;
@@ -2296,6 +2311,7 @@ export default function App() {
     }
     if (mode === 'multiplayer') {
       setMultiplayerRoundStartMs(effectiveStartMs);
+      setMultiplayerRoundDeadlineMs(hasDeadlineAt ? deadlineAtMsRaw : null);
       setNowTs(Date.now());
       if (hasStartAt) {
         setMultiplayerLockedUntil(startAtMsRaw);
@@ -2309,6 +2325,7 @@ export default function App() {
     } else {
       setMultiplayerLockedUntil(null);
       setMultiplayerRoundStartMs(null);
+      setMultiplayerRoundDeadlineMs(null);
     }
 
     trackEvent('level_start', {
@@ -2396,15 +2413,17 @@ export default function App() {
     };
   }, [isMultiplayerLocked]);
 
-  // Multiplayer timer uses absolute start time to avoid drift/freezes.
+  // Multiplayer timer uses server deadline so everyone shares the same end moment.
   useEffect(() => {
-    if (!isMultiplayerRound || multiplayerRoundStartMs === null) return;
+    if (!isMultiplayerRound) return;
+    if (multiplayerRoundDeadlineMs === null && multiplayerRoundStartMs === null) return;
     if (isWin || isGameOver || isShowingSolution || isSolving || isGenerating) return;
     let didTimeout = false;
 
     const syncRemaining = () => {
-      const elapsed = Math.max(0, Math.floor((Date.now() - multiplayerRoundStartMs) / 1000));
-      const remaining = Math.max(0, config.timeSeconds - elapsed);
+      const remaining = multiplayerRoundDeadlineMs !== null
+        ? Math.max(0, Math.floor((multiplayerRoundDeadlineMs - Date.now()) / 1000))
+        : Math.max(0, config.timeSeconds - Math.max(0, Math.floor((Date.now() - (multiplayerRoundStartMs ?? Date.now())) / 1000)));
       setTimeLeft((prev) => (prev === remaining ? prev : remaining));
 
       if (isMultiplayerLocked) return;
@@ -2432,6 +2451,7 @@ export default function App() {
     };
   }, [
     isMultiplayerRound,
+    multiplayerRoundDeadlineMs,
     multiplayerRoundStartMs,
     isMultiplayerLocked,
     isWin,
@@ -2800,6 +2820,8 @@ export default function App() {
       mode: 'multiplayer',
       puzzleSeed: round.puzzleSeed,
       startAt: round.startAt,
+      deadlineAt: round.deadlineAt,
+      timeoutSeconds: round.timeoutSeconds,
     });
     setScreen('game');
     const msLeft = Date.parse(round.startAt) - Date.now();

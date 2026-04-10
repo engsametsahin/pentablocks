@@ -411,6 +411,8 @@ function toRoomRoundDto(row, submissions) {
     levelId: row.level_id,
     puzzleSeed: row.puzzle_seed,
     startAt: row.start_at,
+    timeoutSeconds: row.timeout_seconds,
+    deadlineAt: row.deadline_at,
     status: row.status,
     endedAt: row.ended_at,
     submissions,
