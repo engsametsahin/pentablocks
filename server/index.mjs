@@ -386,6 +386,7 @@ function toRoomPlayerDto(row) {
     provider: row.provider,
     joinedAt: row.joined_at,
     totalPoints: row.total_points,
+    readyForRound: row.ready_for_round ?? 0,
   };
 }
 
@@ -533,6 +534,12 @@ async function startRoomRound(client, roomRow, roundNumber) {
      WHERE id = $1`,
     [roomRow.id, roundNumber],
   );
+  await client.query(
+    `UPDATE multiplayer_room_players
+     SET ready_for_round = 0
+     WHERE room_id = $1`,
+    [roomRow.id],
+  );
 }
 
 async function finalizeRoomRound(client, roomRow, roundRow, includeTimeoutDnfs) {
@@ -637,7 +644,12 @@ async function finalizeRoomRound(client, roomRow, roundRow, includeTimeoutDnfs) 
       [roomRow.id, championUserId],
     );
   } else {
-    await startRoomRound(client, roomRow, roomRow.current_round + 1);
+    await client.query(
+      `UPDATE multiplayer_rooms
+       SET updated_at = NOW()
+       WHERE id = $1`,
+      [roomRow.id],
+    );
   }
 }
 
@@ -1572,6 +1584,119 @@ app.post('/api/multiplayer/rooms/:code/start', async (req, res) => {
     await client.query('ROLLBACK');
     console.error('multiplayer start room error', error);
     res.status(500).json({ error: 'room_start_failed' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/multiplayer/rooms/:code/next', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const code = normalizeChallengeCode(req.params.code);
+  if (!code) {
+    res.status(400).json({ error: 'invalid_room_code' });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const roomQuery = await client.query(
+      `SELECT *
+       FROM multiplayer_rooms
+       WHERE code = $1
+       LIMIT 1
+       FOR UPDATE`,
+      [code],
+    );
+    if (roomQuery.rows.length === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'room_not_found' });
+      return;
+    }
+    const room = roomQuery.rows[0];
+    if (room.status !== 'in_progress') {
+      await client.query('ROLLBACK');
+      res.status(409).json({ error: 'room_not_active' });
+      return;
+    }
+
+    const isParticipant = await userIsRoomParticipant(room.id, user.id);
+    if (!isParticipant) {
+      await client.query('ROLLBACK');
+      res.status(403).json({ error: 'room_forbidden' });
+      return;
+    }
+
+    if (room.current_round >= room.total_rounds) {
+      await client.query('ROLLBACK');
+      const snapshot = await readRoomByCode(code);
+      res.json(snapshot);
+      return;
+    }
+
+    const currentRoundQuery = await client.query(
+      `SELECT *
+       FROM multiplayer_room_rounds
+       WHERE room_id = $1 AND round_number = $2
+       LIMIT 1
+       FOR UPDATE`,
+      [room.id, room.current_round],
+    );
+    if (currentRoundQuery.rows.length === 0) {
+      await client.query('ROLLBACK');
+      res.status(409).json({ error: 'room_round_not_found' });
+      return;
+    }
+    const currentRound = currentRoundQuery.rows[0];
+    if (currentRound.status !== 'finished') {
+      await client.query('ROLLBACK');
+      res.status(409).json({ error: 'room_round_not_finished' });
+      return;
+    }
+
+    const targetRound = room.current_round + 1;
+    await client.query(
+      `UPDATE multiplayer_room_players
+       SET ready_for_round = GREATEST(ready_for_round, $2)
+       WHERE room_id = $1
+         AND user_id = $3`,
+      [room.id, targetRound, user.id],
+    );
+
+    const playerCountQuery = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM multiplayer_room_players
+       WHERE room_id = $1`,
+      [room.id],
+    );
+    const readyCountQuery = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM multiplayer_room_players
+       WHERE room_id = $1
+         AND ready_for_round >= $2`,
+      [room.id, targetRound],
+    );
+
+    if (readyCountQuery.rows[0].count >= playerCountQuery.rows[0].count) {
+      await startRoomRound(client, room, targetRound);
+    } else {
+      await client.query(
+        `UPDATE multiplayer_rooms
+         SET updated_at = NOW()
+         WHERE id = $1`,
+        [room.id],
+      );
+    }
+
+    await client.query('COMMIT');
+    const snapshot = await readRoomByCode(code);
+    res.json(snapshot);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('multiplayer next round ready error', error);
+    res.status(500).json({ error: 'room_next_round_failed' });
   } finally {
     client.release();
   }

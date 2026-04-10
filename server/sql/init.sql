@@ -229,8 +229,12 @@ CREATE TABLE IF NOT EXISTS multiplayer_room_players (
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   total_points INTEGER NOT NULL DEFAULT 0,
+  ready_for_round INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (room_id, user_id)
 );
+
+ALTER TABLE multiplayer_room_players
+  ADD COLUMN IF NOT EXISTS ready_for_round INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS multiplayer_room_rounds (
   id BIGSERIAL PRIMARY KEY,

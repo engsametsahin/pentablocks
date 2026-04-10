@@ -19,6 +19,7 @@ import {
   fetchMultiplayerChallenge,
   fetchMultiplayerStats,
   joinMultiplayerRoom,
+  readyMultiplayerRoomNextRound,
   startMultiplayerRoom,
   submitMultiplayerRoomRound,
   submitMultiplayerChallengeResult,
@@ -339,6 +340,8 @@ function authErrorToMessage(error: unknown) {
     room_not_active: 'This room is not active right now.',
     room_round_mismatch: 'Round is out of sync. Please refresh room state.',
     room_round_not_found: 'Current round was not found.',
+    room_round_not_finished: 'Round is still running. Finish this round first.',
+    room_next_round_failed: 'Could not ready up for next round. Please try again.',
     room_create_failed: 'Could not create room. Please try again.',
     room_fetch_failed: 'Could not load room details.',
     room_join_failed: 'Could not join room. Please try again.',
@@ -1613,6 +1616,8 @@ export default function App() {
   const [activeChallenge, setActiveChallenge] = useState<ActiveChallengeState | null>(null);
   const [activeRoom, setActiveRoom] = useState<ActiveRoomState | null>(null);
   const [activeLeaderboard, setActiveLeaderboard] = useState<ActiveRoomLeaderboardRow[]>([]);
+  const [nextRoundReadySubmitted, setNextRoundReadySubmitted] = useState(false);
+  const [nextRoundReadyCount, setNextRoundReadyCount] = useState(0);
   const [multiplayerStats, setMultiplayerStats] = useState<MultiplayerStats | null>(null);
   const [multiplayerLockedUntil, setMultiplayerLockedUntil] = useState<number | null>(null);
   const [multiplayerRoundStartMs, setMultiplayerRoundStartMs] = useState<number | null>(null);
@@ -1910,6 +1915,8 @@ export default function App() {
       setActiveChallenge(null);
       setActiveRoom(null);
       setActiveLeaderboard([]);
+      setNextRoundReadySubmitted(false);
+      setNextRoundReadyCount(0);
       setGameMode('single');
       setMatchSnapshot(null);
       setHasSubmittedMatchResult(false);
@@ -2094,6 +2101,8 @@ export default function App() {
     });
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
+    setNextRoundReadySubmitted(false);
+    setNextRoundReadyCount(0);
     await initGame(round.levelId, 'start', {
       mode: 'multiplayer',
       puzzleSeed: round.puzzleSeed,
@@ -2127,6 +2136,11 @@ export default function App() {
               totalPoints: player.totalPoints,
             })),
           );
+          if (nextRoundReadySubmitted) {
+            const targetRound = activeRoom.roundNumber + 1;
+            const readyCount = latestRoom.players.filter((player) => player.readyForRound >= targetRound).length;
+            setNextRoundReadyCount(readyCount);
+          }
           const round = latestRoom.activeRound;
           const hasAdvancedRound = Boolean(
             round
@@ -2204,7 +2218,7 @@ export default function App() {
       active = false;
       window.clearInterval(interval);
     };
-  }, [isMultiplayerRound, activeChallenge, activeRoom, authUser, hasSubmittedMatchResult, isGameOver, isWin, mapRoomToMatchSnapshot, showToast, submitChallengeResult]);
+  }, [isMultiplayerRound, activeChallenge, activeRoom, authUser, hasSubmittedMatchResult, isGameOver, isWin, mapRoomToMatchSnapshot, nextRoundReadySubmitted, showToast, submitChallengeResult]);
 
   const markLevelComplete = useCallback((lvl: number) => {
     setCompletedLevels(prev => {
@@ -2770,6 +2784,8 @@ export default function App() {
     setActiveChallenge(null);
     setActiveRoom(null);
     setActiveLeaderboard([]);
+    setNextRoundReadySubmitted(false);
+    setNextRoundReadyCount(0);
     setGameMode('single');
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
@@ -2781,6 +2797,8 @@ export default function App() {
     setActiveChallenge(null);
     setActiveRoom(null);
     setActiveLeaderboard([]);
+    setNextRoundReadySubmitted(false);
+    setNextRoundReadyCount(0);
     setGameMode('single');
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
@@ -2816,6 +2834,8 @@ export default function App() {
     setActiveChallenge(challengeState);
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
+    setNextRoundReadySubmitted(false);
+    setNextRoundReadyCount(0);
     await initGame(round.levelId, 'start', {
       mode: 'multiplayer',
       puzzleSeed: round.puzzleSeed,
@@ -2833,7 +2853,7 @@ export default function App() {
   const handleNextMultiplayerRound = useCallback(async () => {
     if (!activeRoom) return;
     try {
-      const latestRoom = await fetchMultiplayerRoom(activeRoom.code);
+      const latestRoom = await readyMultiplayerRoomNextRound(activeRoom.code);
       setActiveLeaderboard(
         latestRoom.players.map((player) => ({
           userId: player.userId,
@@ -2841,13 +2861,17 @@ export default function App() {
           totalPoints: player.totalPoints,
         })),
       );
+      const targetRound = activeRoom.roundNumber + 1;
+      const readyCount = latestRoom.players.filter((player) => player.readyForRound >= targetRound).length;
+      setNextRoundReadySubmitted(true);
+      setNextRoundReadyCount(readyCount);
       const nextRound = latestRoom.activeRound;
       if (!nextRound) {
         setScreen('multiplayer');
         return;
       }
       if (nextRound.roundNumber <= activeRoom.roundNumber && latestRoom.room.status !== 'finished') {
-        showToast('Next round is not ready yet. Waiting for all players.', 'neutral');
+        showToast(`Waiting for players... Ready ${readyCount}/${latestRoom.players.length}`, 'neutral');
         return;
       }
       await startChallengeGame(latestRoom);
@@ -3303,13 +3327,20 @@ export default function App() {
                     </div>
                   )}
 
+                  {activeRoom && activeRoom.roundNumber < activeRoom.totalRounds && nextRoundReadySubmitted && (
+                    <p className="text-xs text-gray-500 mb-3">
+                      Waiting for players... Ready {nextRoundReadyCount}/{Math.max(1, activeLeaderboard.length)}
+                    </p>
+                  )}
+
                   <div className="flex flex-col gap-3">
                     {activeRoom && activeRoom.roundNumber < activeRoom.totalRounds && (
                       <button
                         onClick={() => { void handleNextMultiplayerRound(); }}
-                        className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all"
+                        disabled={nextRoundReadySubmitted}
+                        className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all disabled:opacity-60"
                       >
-                        Next Round
+                        {nextRoundReadySubmitted ? 'Ready Sent' : 'Next Round'}
                       </button>
                     )}
                     <button

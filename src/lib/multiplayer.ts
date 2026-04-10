@@ -118,6 +118,7 @@ export interface MultiplayerRoomPlayer {
   provider: CloudUser['provider'];
   joinedAt: string;
   totalPoints: number;
+  readyForRound: number;
 }
 
 export interface MultiplayerRoomSubmission {
@@ -224,6 +225,13 @@ export async function joinMultiplayerRoom(code: string) {
 export async function startMultiplayerRoom(code: string) {
   return request<MultiplayerRoomSnapshot>(
     `/api/multiplayer/rooms/${encodeURIComponent(code)}/start`,
+    { method: 'POST' },
+  );
+}
+
+export async function readyMultiplayerRoomNextRound(code: string) {
+  return request<MultiplayerRoomSnapshot>(
+    `/api/multiplayer/rooms/${encodeURIComponent(code)}/next`,
     { method: 'POST' },
   );
 }
