@@ -741,6 +741,7 @@ function MultiplayerScreen({
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
   const [waitingForOtherReady, setWaitingForOtherReady] = useState(false);
+  const launchedChallengeKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     setLevelId(defaultLevel);
@@ -751,6 +752,10 @@ function MultiplayerScreen({
     if (!code) return;
     setJoinCode(sanitizeCode(code));
   }, []);
+
+  useEffect(() => {
+    launchedChallengeKeyRef.current = null;
+  }, [snapshot?.challenge.code]);
 
   const sanitizeCode = (raw: string) => raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
 
@@ -766,6 +771,23 @@ function MultiplayerScreen({
     : `Ready ${readyCount}/${readyTarget}`;
 
   const canUseMultiplayer = Boolean(user);
+
+  const launchChallengeIfStarted = useCallback(async (nextSnapshot: MultiplayerChallengeSnapshot) => {
+    if (!nextSnapshot.challenge.startAt) return;
+    const launchKey = `${nextSnapshot.challenge.code}:${nextSnapshot.challenge.startAt}`;
+    if (launchedChallengeKeyRef.current === launchKey) return;
+    launchedChallengeKeyRef.current = launchKey;
+    setWaitingForOtherReady(false);
+    setLaunching(true);
+    try {
+      await onStartChallenge(nextSnapshot);
+    } catch (err) {
+      launchedChallengeKeyRef.current = null;
+      setError(authErrorToMessage(err));
+    } finally {
+      setLaunching(false);
+    }
+  }, [onStartChallenge]);
 
   const ensureMultiplayerAuth = async () => {
     if (canUseMultiplayer) return true;
@@ -831,14 +853,7 @@ function MultiplayerScreen({
       const nextSnapshot = { challenge: data.challenge, players: data.players };
       setSnapshot(nextSnapshot);
       setJoinCode(data.challenge.code);
-      if (waitingForOtherReady && nextSnapshot.challenge.startAt) {
-        setLaunching(true);
-        try {
-          await onStartChallenge(nextSnapshot);
-        } finally {
-          setLaunching(false);
-        }
-      }
+      await launchChallengeIfStarted(nextSnapshot);
     } catch (err) {
       setError(authErrorToMessage(err));
     } finally {
@@ -867,13 +882,7 @@ function MultiplayerScreen({
       setSnapshot(started);
       setJoinCode(started.challenge.code);
       if (started.challenge.startAt) {
-        setWaitingForOtherReady(false);
-        setLaunching(true);
-        try {
-          await onStartChallenge(started);
-        } finally {
-          setLaunching(false);
-        }
+        await launchChallengeIfStarted(started);
       } else {
         setWaitingForOtherReady(true);
         onToast('Waiting for the other player to press Play.', 'neutral');
@@ -894,7 +903,7 @@ function MultiplayerScreen({
 
   useEffect(() => {
     const code = snapshot?.challenge.code;
-    if (!waitingForOtherReady || !code) return;
+    if (!code) return;
     let active = true;
 
     const poll = async () => {
@@ -905,29 +914,25 @@ function MultiplayerScreen({
         setSnapshot(nextSnapshot);
         setJoinCode(data.challenge.code);
         if (nextSnapshot.challenge.startAt) {
-          setWaitingForOtherReady(false);
-          setLaunching(true);
-          try {
-            await onStartChallenge(nextSnapshot);
-          } finally {
-            if (active) setLaunching(false);
-          }
+          await launchChallengeIfStarted(nextSnapshot);
         }
-      } catch {
-        // Keep waiting state; manual refresh is still available.
+      } catch (err) {
+        if (active) {
+          setError(authErrorToMessage(err));
+        }
       }
     };
 
     void poll();
     const interval = window.setInterval(() => {
       void poll();
-    }, 1200);
+    }, waitingForOtherReady ? 900 : 1500);
 
     return () => {
       active = false;
       window.clearInterval(interval);
     };
-  }, [onStartChallenge, snapshot?.challenge.code, waitingForOtherReady]);
+  }, [launchChallengeIfStarted, snapshot?.challenge.code, waitingForOtherReady]);
 
   return (
     <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
@@ -1450,6 +1455,7 @@ export default function App() {
   const [activeChallenge, setActiveChallenge] = useState<ActiveChallengeState | null>(null);
   const [multiplayerStats, setMultiplayerStats] = useState<MultiplayerStats | null>(null);
   const [multiplayerLockedUntil, setMultiplayerLockedUntil] = useState<number | null>(null);
+  const [multiplayerRoundStartMs, setMultiplayerRoundStartMs] = useState<number | null>(null);
   const [matchSnapshot, setMatchSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
   const [hasSubmittedMatchResult, setHasSubmittedMatchResult] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
@@ -1961,6 +1967,7 @@ export default function App() {
       setIsAdBreakVisible(false);
     }
     if (mode === 'multiplayer') {
+      setMultiplayerRoundStartMs(effectiveStartMs);
       setNowTs(Date.now());
       if (hasStartAt) {
         setMultiplayerLockedUntil(startAtMsRaw);
@@ -1973,6 +1980,7 @@ export default function App() {
       }
     } else {
       setMultiplayerLockedUntil(null);
+      setMultiplayerRoundStartMs(null);
     }
 
     trackEvent('level_start', {
@@ -2060,33 +2068,77 @@ export default function App() {
     };
   }, [isMultiplayerLocked]);
 
-  // Timer
+  // Multiplayer timer uses absolute start time to avoid drift/freezes.
   useEffect(() => {
+    if (!isMultiplayerRound || multiplayerRoundStartMs === null) return;
+    if (isWin || isGameOver || isShowingSolution || isSolving || isGenerating) return;
+    let didTimeout = false;
+
+    const syncRemaining = () => {
+      const elapsed = Math.max(0, Math.floor((Date.now() - multiplayerRoundStartMs) / 1000));
+      const remaining = Math.max(0, config.timeSeconds - elapsed);
+      setTimeLeft((prev) => (prev === remaining ? prev : remaining));
+
+      if (isMultiplayerLocked) return;
+      if (remaining <= 0 && !didTimeout) {
+        didTimeout = true;
+        setIsGameOver(true);
+        setIsActive(false);
+        void submitChallengeResult(false, 0);
+        trackEvent('level_failed', {
+          level,
+          reason: 'timeout',
+          mode: gameMode,
+          elapsed_seconds: Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000)),
+        });
+        return;
+      }
+
+      setIsActive(true);
+    };
+
+    syncRemaining();
+    const interval = window.setInterval(syncRemaining, 250);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [
+    isMultiplayerRound,
+    multiplayerRoundStartMs,
+    isMultiplayerLocked,
+    isWin,
+    isGameOver,
+    isShowingSolution,
+    isSolving,
+    isGenerating,
+    config.timeSeconds,
+    level,
+    gameMode,
+    submitChallengeResult,
+  ]);
+
+  // Single-player timer
+  useEffect(() => {
+    if (gameMode !== 'single') return;
     let interval: ReturnType<typeof setInterval>;
     if (isActive && timeLeft > 0 && !isWin && !isShowingSolution && !isSolving && !isGenerating) {
       interval = setInterval(() => {
         setTimeLeft((prev) => prev - 1);
-        if (gameMode === 'single') {
-          updatePlayerStats((prev) => ({ ...prev, totalPlaySeconds: prev.totalPlaySeconds + 1 }));
-        }
+        updatePlayerStats((prev) => ({ ...prev, totalPlaySeconds: prev.totalPlaySeconds + 1 }));
       }, 1000);
     } else if (timeLeft === 0 && !isWin && !isGameOver && !isShowingSolution && !isSolving && !isGenerating) {
       setIsGameOver(true);
       setIsActive(false);
-      if (gameMode === 'single') {
-        updatePlayerStats((prev) => ({ ...prev, losses: prev.losses + 1 }));
-      } else {
-        void submitChallengeResult(false, 0);
-      }
+      updatePlayerStats((prev) => ({ ...prev, losses: prev.losses + 1 }));
       trackEvent('level_failed', {
         level,
         reason: 'timeout',
-        mode: gameMode,
+        mode: 'single',
         elapsed_seconds: Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000)),
       });
     }
     return () => clearInterval(interval);
-  }, [isActive, timeLeft, isWin, isGameOver, isShowingSolution, isSolving, isGenerating, updatePlayerStats, showToast, level, gameMode, submitChallengeResult]);
+  }, [isActive, timeLeft, isWin, isGameOver, isShowingSolution, isSolving, isGenerating, updatePlayerStats, level, gameMode]);
 
   // Win condition
   useEffect(() => {

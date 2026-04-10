@@ -1,0 +1,1 @@
+cd /opt/pentablocks && git pull && npm ci && npm run build && systemctl restart pentablocks-api && systemctl reload nginx
