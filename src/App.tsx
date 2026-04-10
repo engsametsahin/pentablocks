@@ -11,8 +11,9 @@ import { solveKatamino } from './solver';
 import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
 import { configureAdSensePreference, initializeAdSense } from './lib/adsense';
-import { fetchCloudProgress, fetchCurrentUser, saveCloudProgress, signInEmail, signInGoogle, signInGuest, signOutCloud, signUpEmail, type CloudUser } from './lib/cloud';
+import { fetchCloudProgress, fetchCurrentUser, saveCloudProgress, signInEmail, signInGoogle, signInGuest, signOutCloud, signUpEmail, updateGuestNickname, type CloudUser } from './lib/cloud';
 import { mountGoogleLoginButton } from './lib/googleIdentity';
+import { playSoundCue, unlockAudio } from './lib/sound';
 import {
   createMultiplayerRoom,
   fetchMultiplayerRoom,
@@ -347,10 +348,35 @@ function authErrorToMessage(error: unknown) {
     room_join_failed: 'Could not join room. Please try again.',
     room_start_failed: 'Could not start room. Please try again.',
     room_submit_failed: 'Could not submit round result.',
+    guest_only_operation: 'This action is available for guest users only.',
+    guest_nickname_update_failed: 'Could not update guest nickname. Please try again.',
     request_failed_500: 'Server error while signing in. Try again.',
     request_failed_503: 'Auth service is not ready yet. Try again.',
   };
   return map[code] ?? code.replaceAll('_', ' ');
+}
+
+function toOrdinal(place: number) {
+  if (place % 100 >= 11 && place % 100 <= 13) return `${place}th`;
+  if (place % 10 === 1) return `${place}st`;
+  if (place % 10 === 2) return `${place}nd`;
+  if (place % 10 === 3) return `${place}rd`;
+  return `${place}th`;
+}
+
+function formatMultiplayerTimeLabel(
+  player: MultiplayerChallengeSnapshot['players'][number],
+  winnerUserId: number | null,
+  roundEnded: boolean,
+) {
+  const isWinner = winnerUserId !== null && player.userId === winnerUserId;
+  if (player.elapsedSeconds !== null) {
+    if (isWinner || player.placement === 1) return `Won ${player.elapsedSeconds}s`;
+    if (player.placement && player.placement > 1) return `${toOrdinal(player.placement)} ${player.elapsedSeconds}s`;
+    return `${player.elapsedSeconds}s`;
+  }
+  if (roundEnded) return 'DNF';
+  return 'In game';
 }
 
 // ─── Menu Screen ──────────────────────────────────────────────────────────────
@@ -768,6 +794,7 @@ function MultiplayerScreen({
   onBack,
   onStartChallenge,
   onGuestBootstrap,
+  onGuestNicknameUpdate,
   multiplayerStats,
   onToast,
 }: {
@@ -775,12 +802,14 @@ function MultiplayerScreen({
   onBack: () => void;
   onStartChallenge: (snapshot: MultiplayerRoomSnapshot) => Promise<void>;
   onGuestBootstrap: () => Promise<boolean>;
+  onGuestNicknameUpdate: (nickname: string) => Promise<void>;
   multiplayerStats: MultiplayerStats | null;
   onToast: (message: string, tone?: ToastTone) => void;
 }) {
   const [difficulty, setDifficulty] = useState<RoomDifficulty>('moderate');
   const [totalRounds, setTotalRounds] = useState(3);
   const [joinCode, setJoinCode] = useState('');
+  const [guestNickname, setGuestNickname] = useState('');
   const [loading, setLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -788,10 +817,19 @@ function MultiplayerScreen({
   const [snapshot, setSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
   const [waitingForOtherReady, setWaitingForOtherReady] = useState(false);
   const launchedChallengeKeyRef = useRef<string | null>(null);
+  const prevLobbyPlayerCountRef = useRef<number | null>(null);
 
   const selectedDifficulty = ROOM_DIFFICULTY_OPTIONS.find((option) => option.value === difficulty) ?? ROOM_DIFFICULTY_OPTIONS[1];
   const difficultyStartLevel = selectedDifficulty.startLevel;
   const difficultyEndLevel = Math.min(MAX_LEVEL, difficultyStartLevel + totalRounds - 1);
+
+  useEffect(() => {
+    if (user?.provider === 'guest') {
+      setGuestNickname(user.displayName.replace(/\s*\(Guest\)\s*$/i, '').trim());
+    } else {
+      setGuestNickname('');
+    }
+  }, [user?.displayName, user?.provider]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -802,7 +840,18 @@ function MultiplayerScreen({
 
   useEffect(() => {
     launchedChallengeKeyRef.current = null;
+    prevLobbyPlayerCountRef.current = null;
   }, [roomSnapshot?.room.code]);
+
+  useEffect(() => {
+    const currentCount = roomSnapshot?.players.length ?? null;
+    if (currentCount === null) return;
+    const prevCount = prevLobbyPlayerCountRef.current;
+    if (prevCount !== null && currentCount > prevCount) {
+      playSoundCue('player_joined');
+    }
+    prevLobbyPlayerCountRef.current = currentCount;
+  }, [roomSnapshot?.players.length]);
 
   const sanitizeCode = (raw: string) => raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
   const syncRoomUrl = (code: string) => {
@@ -827,6 +876,8 @@ function MultiplayerScreen({
         readyAt: null,
         status,
         didWin: submission ? (didFinish ? submission.placement === 1 : false) : null,
+        didFinish,
+        placement: submission?.placement ?? null,
         elapsedSeconds: submission ? (didFinish ? submission.elapsedSeconds : null) : null,
         remainingSeconds: submission ? (didFinish ? submission.remainingSeconds : null) : null,
         submittedAt: submission ? submission.submittedAt : null,
@@ -937,6 +988,9 @@ function MultiplayerScreen({
     try {
       setLoading(true);
       setError(null);
+      if (user?.provider === 'guest' && guestNickname.trim()) {
+        await onGuestNicknameUpdate(guestNickname.trim());
+      }
       const data = await joinMultiplayerRoom(code);
       setRoomSnapshot(data);
       setSnapshot(mapRoomToChallengeSnapshot(data));
@@ -1115,6 +1169,21 @@ function MultiplayerScreen({
 
           <div className="bg-white rounded-3xl p-6 border border-black/5 shadow-sm">
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Join Room</p>
+            {user?.provider === 'guest' && (
+              <>
+                <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Nickname (Guest)</label>
+                <input
+                  type="text"
+                  value={guestNickname}
+                  onChange={(e) => setGuestNickname(e.target.value.slice(0, 24))}
+                  placeholder="Your name"
+                  className="mt-2 w-full mb-3 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+                />
+                <p className="mb-3 text-[11px] text-gray-500">
+                  Displayed as <span className="font-semibold">{(guestNickname.trim() || 'Guest')} (Guest)</span>
+                </p>
+              </>
+            )}
             <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Code</label>
             <input
               type="text"
@@ -1624,6 +1693,7 @@ export default function App() {
   const [multiplayerRoundDeadlineMs, setMultiplayerRoundDeadlineMs] = useState<number | null>(null);
   const [matchSnapshot, setMatchSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
   const [hasSubmittedMatchResult, setHasSubmittedMatchResult] = useState(false);
+  const [isScoreboardOpen, setIsScoreboardOpen] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1633,6 +1703,9 @@ export default function App() {
   const levelStartRef = useRef<number>(Date.now());
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const cloudSyncTimeoutRef = useRef<number | null>(null);
+  const lastCountdownSoundRef = useRef<number | null>(null);
+  const lastLowTimeSoundRef = useRef<number | null>(null);
+  const lastRoundEndSoundKeyRef = useRef<string | null>(null);
 
   const config = LEVEL_CONFIGS[level - 1];
   const gridWidth = config.width;
@@ -1711,24 +1784,26 @@ export default function App() {
       players: data.players.map((player) => {
         const submission = submissions.get(player.userId);
         const status: 'joined' | 'submitted' = submission ? 'submitted' : 'joined';
-        const didFinish = submission?.didFinish ?? null;
-        return {
+      const didFinish = submission?.didFinish ?? null;
+      return {
           userId: player.userId,
           displayName: player.displayName,
           provider: player.provider,
           joinedAt: player.joinedAt,
           readyAt: null,
-          status,
-          didWin: submission ? (didFinish ? submission.placement === 1 : false) : null,
-          elapsedSeconds: submission ? (didFinish ? submission.elapsedSeconds : null) : null,
-          remainingSeconds: submission ? (didFinish ? submission.remainingSeconds : null) : null,
-          submittedAt: submission ? submission.submittedAt : null,
-        };
+        status,
+        didWin: submission ? (didFinish ? submission.placement === 1 : false) : null,
+        didFinish,
+        placement: submission?.placement ?? null,
+        elapsedSeconds: submission ? (didFinish ? submission.elapsedSeconds : null) : null,
+        remainingSeconds: submission ? (didFinish ? submission.remainingSeconds : null) : null,
+        submittedAt: submission ? submission.submittedAt : null,
+      };
       }),
     };
   }, []);
 
-  const submitChallengeResult = useCallback(async (didWin: boolean, remainingOverride?: number) => {
+  const submitChallengeResult = useCallback(async (didWin: boolean, remainingOverride?: number, didFinish = true) => {
     if (!activeChallenge || hasSubmittedMatchResult) return null;
     const elapsedSeconds = Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000));
     const remainingSeconds = Math.max(0, Math.floor(remainingOverride ?? timeLeft));
@@ -1739,6 +1814,7 @@ export default function App() {
           roundNumber: activeRoom.roundNumber,
           elapsedSeconds,
           remainingSeconds,
+          didFinish,
         });
         setActiveLeaderboard(
           roomSnapshot.players.map((player) => ({
@@ -1856,6 +1932,11 @@ export default function App() {
       setAuthLoading(false);
     }
   }, [hydrateCloudForUser, showToast]);
+
+  const handleGuestNicknameUpdate = useCallback(async (nickname: string) => {
+    const updated = await updateGuestNickname(nickname);
+    setAuthUser(updated);
+  }, []);
 
   const handleGoogleCredential = useCallback(async (idToken: string) => {
     try {
@@ -2171,14 +2252,14 @@ export default function App() {
               championUserId: latestRoom.room.championUserId,
             });
           }
-          const roundWinner = round?.submissions.find((submission) => submission.placement === 1)?.userId ?? null;
-          if (roundWinner && roundWinner !== authUser.id && !isWin && !isGameOver) {
+          const mySubmission = round?.submissions.find((submission) => submission.userId === authUser.id) ?? null;
+          if (mySubmission && !hasSubmittedMatchResult) {
+            setHasSubmittedMatchResult(true);
+          }
+          if (mySubmission && !mySubmission.didFinish && !isWin && !isGameOver) {
             setIsActive(false);
             setIsGameOver(true);
-            showToast('Another player finished first this round.', 'warning');
-            if (!hasSubmittedMatchResult) {
-              void submitChallengeResult(false);
-            }
+            showToast('Round ended. You were the last unresolved player.', 'warning');
           }
         } else {
           const latest = await fetchMultiplayerChallenge(activeChallenge.code);
@@ -2194,15 +2275,6 @@ export default function App() {
           setActiveChallenge(normalized);
           setMatchSnapshot({ challenge: latest.challenge, players: latest.players });
 
-          const winnerId = latest.challenge.winnerUserId;
-          if (winnerId && winnerId !== authUser.id && !isWin && !isGameOver) {
-            setIsActive(false);
-            setIsGameOver(true);
-            showToast('Opponent finished first.', 'warning');
-            if (!hasSubmittedMatchResult) {
-              void submitChallengeResult(false);
-            }
-          }
         }
       } catch {
         // Polling errors should not disrupt local play loop.
@@ -2288,6 +2360,7 @@ export default function App() {
     setGameMode(mode);
     setHasSubmittedMatchResult(false);
     setMatchSnapshot(null);
+    setIsScoreboardOpen(false);
     if (mode === 'single') {
       updatePlayerStats((prev) => ({
         ...prev,
@@ -2427,6 +2500,57 @@ export default function App() {
     };
   }, [isMultiplayerLocked]);
 
+  useEffect(() => {
+    const onFirstInteract = () => {
+      unlockAudio();
+      window.removeEventListener('pointerdown', onFirstInteract);
+      window.removeEventListener('keydown', onFirstInteract);
+    };
+    window.addEventListener('pointerdown', onFirstInteract, { once: true });
+    window.addEventListener('keydown', onFirstInteract, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', onFirstInteract);
+      window.removeEventListener('keydown', onFirstInteract);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMultiplayerLocked) {
+      lastCountdownSoundRef.current = null;
+      return;
+    }
+    if (multiplayerCountdownSeconds <= 0) return;
+    if (lastCountdownSoundRef.current === multiplayerCountdownSeconds) return;
+    lastCountdownSoundRef.current = multiplayerCountdownSeconds;
+    playSoundCue('countdown_tick');
+  }, [isMultiplayerLocked, multiplayerCountdownSeconds]);
+
+  useEffect(() => {
+    if (gameMode !== 'multiplayer' || isMultiplayerLocked || isGameOver || isWin || isShowingSolution) {
+      lastLowTimeSoundRef.current = null;
+      return;
+    }
+    if (!isActive) return;
+    if (timeLeft <= 0 || timeLeft > 10) return;
+    if (lastLowTimeSoundRef.current === timeLeft) return;
+    if (timeLeft === 10 || timeLeft <= 5) {
+      playSoundCue('time_low');
+      lastLowTimeSoundRef.current = timeLeft;
+    }
+  }, [gameMode, isMultiplayerLocked, isGameOver, isWin, isShowingSolution, isActive, timeLeft]);
+
+  useEffect(() => {
+    if (gameMode !== 'multiplayer') {
+      lastRoundEndSoundKeyRef.current = null;
+      return;
+    }
+    if (!(isGameOver || isWin) || isShowingSolution) return;
+    const key = `${activeChallenge?.code ?? 'no-code'}:${activeRoom?.roundNumber ?? 0}:${isWin ? 'win' : 'end'}`;
+    if (lastRoundEndSoundKeyRef.current === key) return;
+    lastRoundEndSoundKeyRef.current = key;
+    playSoundCue('round_end');
+  }, [gameMode, isGameOver, isWin, isShowingSolution, activeChallenge?.code, activeRoom?.roundNumber]);
+
   // Multiplayer timer uses server deadline so everyone shares the same end moment.
   useEffect(() => {
     if (!isMultiplayerRound) return;
@@ -2445,7 +2569,7 @@ export default function App() {
         didTimeout = true;
         setIsGameOver(true);
         setIsActive(false);
-        void submitChallengeResult(false, 0);
+        void submitChallengeResult(false, 0, false);
         trackEvent('level_failed', {
           level,
           reason: 'timeout',
@@ -2749,6 +2873,7 @@ export default function App() {
 
   const goToLevelSelect = () => {
     setIsActive(false);
+    setIsScoreboardOpen(false);
     if (gameMode === 'multiplayer') {
       setScreen('multiplayer');
       return;
@@ -2789,6 +2914,7 @@ export default function App() {
     setGameMode('single');
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
+    setIsScoreboardOpen(false);
     initGame(lvl, 'start', { mode: 'single' });
     setScreen('game');
   }, [initGame]);
@@ -2880,6 +3006,15 @@ export default function App() {
     }
   }, [activeRoom, showToast, startChallengeGame]);
 
+  const handleGiveUpRound = useCallback(() => {
+    if (gameMode !== 'multiplayer') return;
+    if (hasSubmittedMatchResult || isGameOver || isWin) return;
+    setIsActive(false);
+    setIsGameOver(true);
+    showToast('You gave up this round.', 'warning');
+    void submitChallengeResult(false, timeLeft, false);
+  }, [gameMode, hasSubmittedMatchResult, isGameOver, isWin, showToast, submitChallengeResult, timeLeft]);
+
   // ── Screen routing ──
   if (screen === 'menu') {
     return (
@@ -2921,6 +3056,7 @@ export default function App() {
           onBack={() => setScreen('menu')}
           onStartChallenge={startChallengeGame}
           onGuestBootstrap={handleGuestLogin}
+          onGuestNicknameUpdate={handleGuestNicknameUpdate}
           multiplayerStats={multiplayerStats}
           onToast={showToast}
         />
@@ -3035,20 +3171,33 @@ export default function App() {
 
           <div className="w-px h-10 bg-gray-100" />
 
-          <button
-            onClick={() => {
-              if (gameMode === 'multiplayer') {
-                showToast('Restart is disabled in multiplayer races.', 'warning');
-                return;
-              }
-              void initGame(undefined, 'restart', { mode: 'single' });
-            }}
-            className="p-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-all active:scale-95 disabled:opacity-40"
-            aria-label="Start a new game"
-            disabled={gameMode === 'multiplayer'}
-          >
-            <RefreshCw size={20} />
-          </button>
+          {gameMode === 'multiplayer' ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsScoreboardOpen(true)}
+                className="px-3 py-2 bg-white border border-black/10 rounded-xl hover:bg-gray-50 transition-all text-xs font-bold"
+              >
+                Scoreboard
+              </button>
+              <button
+                onClick={handleGiveUpRound}
+                disabled={hasSubmittedMatchResult || isWin || isGameOver}
+                className="px-3 py-2 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-all text-xs font-bold disabled:opacity-40"
+              >
+                Give Up
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                void initGame(undefined, 'restart', { mode: 'single' });
+              }}
+              className="p-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-all active:scale-95"
+              aria-label="Start a new game"
+            >
+              <RefreshCw size={20} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -3059,7 +3208,6 @@ export default function App() {
         <div className="w-full lg:w-48 flex flex-col gap-4">
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-black/5 flex flex-col gap-4">
             <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400">Piece Controls</h3>
-            <p className="text-[10px] text-gray-400">R = Rotate | F = Flip | Esc = Stash</p>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => selectedPieceId && handleRotate(selectedPieceId)}
@@ -3069,6 +3217,7 @@ export default function App() {
               >
                 <RotateCw size={20} className="mb-2" />
                 <span className="text-[10px] font-bold uppercase">Rotate</span>
+                <span className="text-[10px] text-gray-400 mt-1">R</span>
               </button>
               <button
                 onClick={() => selectedPieceId && handleFlip(selectedPieceId)}
@@ -3078,6 +3227,7 @@ export default function App() {
               >
                 <FlipHorizontal size={20} className="mb-2" />
                 <span className="text-[10px] font-bold uppercase">Flip</span>
+                <span className="text-[10px] text-gray-400 mt-1">F</span>
               </button>
             </div>
             <button
@@ -3087,6 +3237,7 @@ export default function App() {
               aria-label="Return piece to stash (Esc)"
             >
               Return to Stash
+              <span className="ml-2 text-[10px] align-middle">(Esc)</span>
             </button>
           </div>
 
@@ -3261,6 +3412,67 @@ export default function App() {
           </motion.div>
         )}
 
+        {isScoreboardOpen && gameMode === 'multiplayer' && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-md z-[75] flex items-center justify-center p-4"
+            onClick={() => setIsScoreboardOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 16 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white rounded-[36px] shadow-2xl w-full max-w-md p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-black">Tournament Scoreboard</h3>
+                <button
+                  onClick={() => setIsScoreboardOpen(false)}
+                  className="px-3 py-1.5 rounded-lg bg-black text-white text-xs font-bold hover:bg-gray-800"
+                >
+                  Close
+                </button>
+              </div>
+
+              {activeRoom && (
+                <p className="text-xs text-gray-500 mb-3">
+                  Round {activeRoom.roundNumber}/{activeRoom.totalRounds}
+                </p>
+              )}
+
+              <div className="bg-gray-50 border border-black/10 rounded-2xl p-4 mb-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Points</p>
+                <div className="space-y-2 text-sm">
+                  {activeLeaderboard.map((player, idx) => (
+                    <div key={player.userId} className="flex items-center justify-between">
+                      <span className="font-bold text-gray-700">{idx + 1}. {player.displayName}</span>
+                      <span className="font-semibold text-emerald-600">{player.totalPoints} pts</span>
+                    </div>
+                  ))}
+                  {activeLeaderboard.length === 0 && <p className="text-gray-500">No points yet.</p>}
+                </div>
+              </div>
+
+              <div className="bg-gray-50 border border-black/10 rounded-2xl p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Current Round</p>
+                <div className="space-y-2 text-sm">
+                  {(() => {
+                    const winnerUserId = matchSnapshot?.challenge.winnerUserId ?? activeChallenge?.winnerUserId ?? null;
+                    const roundEnded = Boolean(matchSnapshot?.challenge.endedAt);
+                    return (matchSnapshot?.players ?? []).map((player) => (
+                      <div key={player.userId} className="flex items-center justify-between">
+                        <span className="font-bold text-gray-700">{player.displayName}</span>
+                        <span className="font-semibold text-gray-500">{formatMultiplayerTimeLabel(player, winnerUserId, roundEnded)}</span>
+                      </div>
+                    ));
+                  })()}
+                  {(matchSnapshot?.players ?? []).length === 0 && <p className="text-gray-500">Waiting for submissions...</p>}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
         {!isShowingSolution && (isGameOver || isWin) && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -3272,10 +3484,23 @@ export default function App() {
             >
               {gameMode === 'multiplayer' ? (
                 <>
-                  <div className={cn('w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6', isWin ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600')}>
-                    {isWin ? <Trophy size={48} /> : <Timer size={48} />}
-                  </div>
-                  <h2 className="text-4xl font-bold mb-2">{isWin ? 'You Won!' : 'Match Finished'}</h2>
+                  {(() => {
+                    const me = (matchSnapshot?.players ?? []).find((player) => player.userId === authUser?.id) ?? null;
+                    const myPlacement = me?.placement ?? null;
+                    const didFinish = me?.didFinish ?? false;
+                    const isRoundWinner = myPlacement === 1;
+                    const title = isRoundWinner
+                      ? 'You Won!'
+                      : (didFinish && myPlacement ? `${toOrdinal(myPlacement)} Place` : 'Match Finished');
+                    return (
+                      <>
+                        <div className={cn('w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6', isRoundWinner ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600')}>
+                          {isRoundWinner ? <Trophy size={48} /> : <Timer size={48} />}
+                        </div>
+                        <h2 className="text-4xl font-bold mb-2">{title}</h2>
+                      </>
+                    );
+                  })()}
                   <p className="text-gray-500 mb-2">
                     {activeChallenge?.isRanked ? 'Ranked challenge' : 'Unranked challenge'} • Code {activeChallenge?.code}
                   </p>
@@ -3294,12 +3519,7 @@ export default function App() {
                         const roundEnded = Boolean(matchSnapshot?.challenge.endedAt);
                         return (matchSnapshot?.players ?? []).map((player) => {
                           const isWinner = winnerUserId !== null && player.userId === winnerUserId;
-                          let timeLabel = 'In game';
-                          if (player.elapsedSeconds !== null) {
-                            timeLabel = isWinner ? `Won ${player.elapsedSeconds}s` : `${player.elapsedSeconds}s`;
-                          } else if (roundEnded) {
-                            timeLabel = 'DNF';
-                          }
+                          const timeLabel = formatMultiplayerTimeLabel(player, winnerUserId, roundEnded);
                           return (
                             <div key={player.userId} className="flex items-center justify-between">
                               <span className="font-bold text-gray-700">{player.displayName}</span>
@@ -3340,6 +3560,12 @@ export default function App() {
                   )}
 
                   <div className="flex flex-col gap-3">
+                    <button
+                      onClick={() => setIsScoreboardOpen(true)}
+                      className="w-full py-3 border border-black/10 rounded-2xl font-bold text-gray-700 hover:bg-gray-100 transition-all text-sm"
+                    >
+                      View Scoreboard
+                    </button>
                     {activeRoom && activeRoom.roundNumber < activeRoom.totalRounds && (
                       <button
                         onClick={() => { void handleNextMultiplayerRound(); }}
