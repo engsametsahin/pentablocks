@@ -103,6 +103,12 @@ interface ActiveRoomState {
   championUserId: number | null;
 }
 
+interface ActiveRoomLeaderboardRow {
+  userId: number;
+  displayName: string;
+  totalPoints: number;
+}
+
 interface ConsentState {
   acceptedAt: string;
   personalizedAds: boolean;
@@ -1606,6 +1612,7 @@ export default function App() {
   const [gameMode, setGameMode] = useState<GameMode>('single');
   const [activeChallenge, setActiveChallenge] = useState<ActiveChallengeState | null>(null);
   const [activeRoom, setActiveRoom] = useState<ActiveRoomState | null>(null);
+  const [activeLeaderboard, setActiveLeaderboard] = useState<ActiveRoomLeaderboardRow[]>([]);
   const [multiplayerStats, setMultiplayerStats] = useState<MultiplayerStats | null>(null);
   const [multiplayerLockedUntil, setMultiplayerLockedUntil] = useState<number | null>(null);
   const [multiplayerRoundStartMs, setMultiplayerRoundStartMs] = useState<number | null>(null);
@@ -1881,6 +1888,7 @@ export default function App() {
       setMultiplayerStats(null);
       setActiveChallenge(null);
       setActiveRoom(null);
+      setActiveLeaderboard([]);
       setGameMode('single');
       setMatchSnapshot(null);
       setHasSubmittedMatchResult(false);
@@ -2038,6 +2046,40 @@ export default function App() {
     };
   }, [authUser, cloudReady, completedLevels, bestTimes, playerStats, singlePlayerLevel, gameMode]);
 
+  async function launchMultiplayerRoundFromSnapshot(snapshot: MultiplayerRoomSnapshot) {
+    const round = snapshot.activeRound;
+    if (!round) return;
+    setActiveRoom({
+      code: snapshot.room.code,
+      totalRounds: snapshot.room.totalRounds,
+      roundNumber: round.roundNumber,
+      maxPlayers: snapshot.room.maxPlayers,
+      championUserId: snapshot.room.championUserId,
+    });
+    setActiveChallenge({
+      code: snapshot.room.code,
+      levelId: round.levelId,
+      puzzleSeed: round.puzzleSeed,
+      isRanked: snapshot.room.isRanked,
+      startAt: round.startAt,
+      winnerUserId: null,
+    });
+    setMatchSnapshot(null);
+    setHasSubmittedMatchResult(false);
+    await initGame(round.levelId, 'start', {
+      mode: 'multiplayer',
+      puzzleSeed: round.puzzleSeed,
+      startAt: round.startAt,
+    });
+    setScreen('game');
+    const msLeft = Date.parse(round.startAt) - Date.now();
+    if (msLeft > 0) {
+      showToast(`Round ${round.roundNumber}/${snapshot.room.totalRounds} starts in ${Math.ceil(msLeft / 1000)}s`, 'neutral');
+    } else {
+      showToast(`Round ${round.roundNumber}/${snapshot.room.totalRounds} started.`, 'neutral');
+    }
+  }
+
   useEffect(() => {
     if (!isMultiplayerRound || !activeChallenge || !authUser) return;
     let active = true;
@@ -2048,15 +2090,34 @@ export default function App() {
           if (!active) return;
           const mapped = mapRoomToMatchSnapshot(latestRoom);
           setMatchSnapshot(mapped);
+          setActiveLeaderboard(
+            latestRoom.players.map((player) => ({
+              userId: player.userId,
+              displayName: player.displayName,
+              totalPoints: player.totalPoints,
+            })),
+          );
           const round = latestRoom.activeRound;
+          const hasAdvancedRound = Boolean(
+            round
+            && (
+              round.roundNumber !== activeRoom.roundNumber
+              || round.puzzleSeed !== activeChallenge.puzzleSeed
+            ),
+          );
+          if (hasAdvancedRound) {
+            await launchMultiplayerRoundFromSnapshot(latestRoom);
+            return;
+          }
           if (round) {
+            const roundWinner = round.submissions.find((submission) => submission.placement === 1)?.userId ?? null;
             setActiveChallenge({
               code: latestRoom.room.code,
               levelId: round.levelId,
               puzzleSeed: round.puzzleSeed,
               isRanked: latestRoom.room.isRanked,
               startAt: round.startAt,
-              winnerUserId: latestRoom.room.championUserId,
+              winnerUserId: roundWinner,
             });
             setActiveRoom({
               code: latestRoom.room.code,
@@ -2661,6 +2722,7 @@ export default function App() {
   const startLevel = useCallback((lvl: number) => {
     setActiveChallenge(null);
     setActiveRoom(null);
+    setActiveLeaderboard([]);
     setGameMode('single');
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
@@ -2671,6 +2733,7 @@ export default function App() {
   const continueFromLastLevel = useCallback(() => {
     setActiveChallenge(null);
     setActiveRoom(null);
+    setActiveLeaderboard([]);
     setGameMode('single');
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
@@ -2687,7 +2750,7 @@ export default function App() {
       puzzleSeed: round.puzzleSeed,
       isRanked: snapshot.room.isRanked,
       startAt: round.startAt,
-      winnerUserId: snapshot.room.championUserId,
+      winnerUserId: null,
     };
     setActiveRoom({
       code: snapshot.room.code,
@@ -2696,6 +2759,13 @@ export default function App() {
       maxPlayers: snapshot.room.maxPlayers,
       championUserId: snapshot.room.championUserId,
     });
+    setActiveLeaderboard(
+      snapshot.players.map((player) => ({
+        userId: player.userId,
+        displayName: player.displayName,
+        totalPoints: player.totalPoints,
+      })),
+    );
     setActiveChallenge(challengeState);
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
@@ -2710,6 +2780,32 @@ export default function App() {
       showToast(`Round starts in ${Math.ceil(msLeft / 1000)}s`, 'neutral');
     }
   }, [initGame, showToast]);
+
+  const handleNextMultiplayerRound = useCallback(async () => {
+    if (!activeRoom) return;
+    try {
+      const latestRoom = await fetchMultiplayerRoom(activeRoom.code);
+      setActiveLeaderboard(
+        latestRoom.players.map((player) => ({
+          userId: player.userId,
+          displayName: player.displayName,
+          totalPoints: player.totalPoints,
+        })),
+      );
+      const nextRound = latestRoom.activeRound;
+      if (!nextRound) {
+        setScreen('multiplayer');
+        return;
+      }
+      if (nextRound.roundNumber <= activeRoom.roundNumber && latestRoom.room.status !== 'finished') {
+        showToast('Next round is not ready yet. Waiting for all players.', 'neutral');
+        return;
+      }
+      await startChallengeGame(latestRoom);
+    } catch (error) {
+      setAuthError(authErrorToMessage(error));
+    }
+  }, [activeRoom, showToast, startChallengeGame]);
 
   // ── Screen routing ──
   if (screen === 'menu') {
@@ -3105,6 +3201,9 @@ export default function App() {
                   <p className="text-gray-500 mb-2">
                     {activeChallenge?.isRanked ? 'Ranked challenge' : 'Unranked challenge'} • Code {activeChallenge?.code}
                   </p>
+                  {activeRoom && (
+                    <p className="text-xs text-gray-400 mb-3">Round {activeRoom.roundNumber}/{activeRoom.totalRounds}</p>
+                  )}
                   {!isWin && activeChallenge?.winnerUserId && (
                     <p className="text-sm text-red-500 mb-4">Opponent finished first.</p>
                   )}
@@ -3136,7 +3235,29 @@ export default function App() {
                     </div>
                   </div>
 
+                  {activeLeaderboard.length > 0 && (
+                    <div className="bg-gray-50 border border-black/10 rounded-2xl p-4 text-left mb-6">
+                      <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Tournament Scoreboard</p>
+                      <div className="space-y-2 text-sm">
+                        {activeLeaderboard.map((player, idx) => (
+                          <div key={player.userId} className="flex items-center justify-between">
+                            <span className="font-bold text-gray-700">{idx + 1}. {player.displayName}</span>
+                            <span className="font-semibold text-emerald-600">{player.totalPoints} pts</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-col gap-3">
+                    {activeRoom && activeRoom.roundNumber < activeRoom.totalRounds && (
+                      <button
+                        onClick={() => { void handleNextMultiplayerRound(); }}
+                        className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold hover:bg-emerald-700 transition-all"
+                      >
+                        Next Round
+                      </button>
+                    )}
                     <button
                       onClick={() => setScreen('multiplayer')}
                       className="w-full py-4 bg-black text-white rounded-2xl font-bold hover:bg-gray-800 transition-all"
