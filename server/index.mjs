@@ -1383,11 +1383,11 @@ app.post('/api/multiplayer/rooms', async (req, res) => {
          total_rounds,
          max_players,
          is_ranked,
-         status,
-         current_round,
-         updated_at
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, 'open', 0, NOW())
+       status,
+       current_round,
+       updated_at
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', 0, NOW())
        RETURNING *`,
       [code, user.id, levelId, difficulty, totalRounds, maxPlayers, user.provider !== 'guest'],
     );
