@@ -168,3 +168,124 @@ CREATE TABLE IF NOT EXISTS user_multiplayer_stats (
   best_elapsed_seconds INTEGER,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS multiplayer_rooms (
+  id BIGSERIAL PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  created_by_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  level_id INTEGER NOT NULL,
+  difficulty TEXT NOT NULL DEFAULT 'moderate',
+  total_rounds INTEGER NOT NULL DEFAULT 3,
+  max_players INTEGER NOT NULL DEFAULT 8,
+  is_ranked BOOLEAN NOT NULL DEFAULT TRUE,
+  status TEXT NOT NULL DEFAULT 'open',
+  current_round INTEGER NOT NULL DEFAULT 0,
+  champion_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ
+);
+
+ALTER TABLE multiplayer_rooms
+  ADD COLUMN IF NOT EXISTS difficulty TEXT NOT NULL DEFAULT 'moderate';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'multiplayer_rooms'
+      AND nsp.nspname = current_schema()
+      AND con.conname = 'multiplayer_rooms_status_check'
+  ) THEN
+    ALTER TABLE multiplayer_rooms
+      ADD CONSTRAINT multiplayer_rooms_status_check CHECK (status IN ('open', 'in_progress', 'finished'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'multiplayer_rooms'
+      AND nsp.nspname = current_schema()
+      AND con.conname = 'multiplayer_rooms_difficulty_check'
+  ) THEN
+    ALTER TABLE multiplayer_rooms
+      ADD CONSTRAINT multiplayer_rooms_difficulty_check CHECK (difficulty IN ('easy', 'moderate', 'hard', 'very_hard'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS multiplayer_rooms_status_idx
+  ON multiplayer_rooms (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS multiplayer_room_players (
+  room_id BIGINT NOT NULL REFERENCES multiplayer_rooms(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  total_points INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (room_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS multiplayer_room_rounds (
+  id BIGSERIAL PRIMARY KEY,
+  room_id BIGINT NOT NULL REFERENCES multiplayer_rooms(id) ON DELETE CASCADE,
+  round_number INTEGER NOT NULL,
+  level_id INTEGER NOT NULL,
+  puzzle_seed TEXT NOT NULL,
+  start_at TIMESTAMPTZ NOT NULL,
+  timeout_seconds INTEGER NOT NULL DEFAULT 240,
+  deadline_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '240 seconds'),
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at TIMESTAMPTZ,
+  UNIQUE (room_id, round_number)
+);
+
+ALTER TABLE multiplayer_room_rounds
+  ADD COLUMN IF NOT EXISTS timeout_seconds INTEGER NOT NULL DEFAULT 240;
+ALTER TABLE multiplayer_room_rounds
+  ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '240 seconds');
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'multiplayer_room_rounds'
+      AND nsp.nspname = current_schema()
+      AND con.conname = 'multiplayer_room_rounds_status_check'
+  ) THEN
+    ALTER TABLE multiplayer_room_rounds
+      ADD CONSTRAINT multiplayer_room_rounds_status_check CHECK (status IN ('active', 'finished'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS multiplayer_room_rounds_room_idx
+  ON multiplayer_room_rounds (room_id, round_number DESC);
+
+CREATE TABLE IF NOT EXISTS multiplayer_room_submissions (
+  round_id BIGINT NOT NULL REFERENCES multiplayer_room_rounds(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  elapsed_seconds INTEGER NOT NULL,
+  remaining_seconds INTEGER NOT NULL,
+  did_finish BOOLEAN NOT NULL DEFAULT TRUE,
+  points_awarded INTEGER NOT NULL DEFAULT 0,
+  placement INTEGER,
+  PRIMARY KEY (round_id, user_id)
+);
+
+ALTER TABLE multiplayer_room_submissions
+  ADD COLUMN IF NOT EXISTS did_finish BOOLEAN NOT NULL DEFAULT TRUE;
+
+CREATE INDEX IF NOT EXISTS multiplayer_room_submissions_round_idx
+  ON multiplayer_room_submissions (round_id, placement ASC NULLS LAST, elapsed_seconds ASC);

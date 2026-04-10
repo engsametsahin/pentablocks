@@ -91,6 +91,64 @@ export interface MultiplayerStats {
   updatedAt: string | null;
 }
 
+export interface MultiplayerRoom {
+  id: number;
+  code: string;
+  levelId: number;
+  difficulty: 'easy' | 'moderate' | 'hard' | 'very_hard';
+  totalRounds: number;
+  maxPlayers: number;
+  isRanked: boolean;
+  status: 'open' | 'in_progress' | 'finished';
+  currentRound: number;
+  championUserId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  host: {
+    id: number;
+    displayName: string;
+    provider: CloudUser['provider'];
+  };
+}
+
+export interface MultiplayerRoomPlayer {
+  userId: number;
+  displayName: string;
+  provider: CloudUser['provider'];
+  joinedAt: string;
+  totalPoints: number;
+}
+
+export interface MultiplayerRoomSubmission {
+  userId: number;
+  displayName: string;
+  provider: CloudUser['provider'];
+  submittedAt: string;
+  elapsedSeconds: number;
+  remainingSeconds: number;
+  didFinish: boolean;
+  pointsAwarded: number;
+  placement: number | null;
+}
+
+export interface MultiplayerRoomRound {
+  id: number;
+  roundNumber: number;
+  levelId: number;
+  puzzleSeed: string;
+  startAt: string;
+  status: 'active' | 'finished';
+  endedAt: string | null;
+  submissions: MultiplayerRoomSubmission[];
+}
+
+export interface MultiplayerRoomSnapshot {
+  room: MultiplayerRoom;
+  players: MultiplayerRoomPlayer[];
+  activeRound: MultiplayerRoomRound | null;
+}
+
 export async function createMultiplayerChallenge(levelId: number) {
   return request<MultiplayerChallengeSnapshot>('/api/multiplayer/challenges', {
     method: 'POST',
@@ -134,4 +192,49 @@ export async function submitMultiplayerChallengeResult(
 
 export async function fetchMultiplayerStats() {
   return request<{ stats: MultiplayerStats }>('/api/multiplayer/stats', { method: 'GET' });
+}
+
+export async function createMultiplayerRoom(payload: {
+  difficulty: 'easy' | 'moderate' | 'hard' | 'very_hard';
+  totalRounds: number;
+  maxPlayers?: number;
+}) {
+  return request<MultiplayerRoomSnapshot>('/api/multiplayer/rooms', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchMultiplayerRoom(code: string) {
+  return request<MultiplayerRoomSnapshot & { viewer?: { isParticipant?: boolean } }>(
+    `/api/multiplayer/rooms/${encodeURIComponent(code)}`,
+    { method: 'GET' },
+  );
+}
+
+export async function joinMultiplayerRoom(code: string) {
+  return request<MultiplayerRoomSnapshot>(
+    `/api/multiplayer/rooms/${encodeURIComponent(code)}/join`,
+    { method: 'POST' },
+  );
+}
+
+export async function startMultiplayerRoom(code: string) {
+  return request<MultiplayerRoomSnapshot>(
+    `/api/multiplayer/rooms/${encodeURIComponent(code)}/start`,
+    { method: 'POST' },
+  );
+}
+
+export async function submitMultiplayerRoomRound(
+  code: string,
+  payload: { roundNumber: number; elapsedSeconds: number; remainingSeconds: number },
+) {
+  return request<MultiplayerRoomSnapshot>(
+    `/api/multiplayer/rooms/${encodeURIComponent(code)}/submit`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
 }

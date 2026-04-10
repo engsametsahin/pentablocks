@@ -14,13 +14,16 @@ import { configureAdSensePreference, initializeAdSense } from './lib/adsense';
 import { fetchCloudProgress, fetchCurrentUser, saveCloudProgress, signInEmail, signInGoogle, signInGuest, signOutCloud, signUpEmail, type CloudUser } from './lib/cloud';
 import { mountGoogleLoginButton } from './lib/googleIdentity';
 import {
-  createMultiplayerChallenge,
+  createMultiplayerRoom,
+  fetchMultiplayerRoom,
   fetchMultiplayerChallenge,
   fetchMultiplayerStats,
-  joinMultiplayerChallenge,
-  startMultiplayerChallenge,
+  joinMultiplayerRoom,
+  startMultiplayerRoom,
+  submitMultiplayerRoomRound,
   submitMultiplayerChallengeResult,
   type MultiplayerChallengeSnapshot,
+  type MultiplayerRoomSnapshot,
   type MultiplayerStats,
 } from './lib/multiplayer';
 
@@ -44,6 +47,7 @@ const DEFAULT_PLAYER_STATS: PlayerStats = {
 
 type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer';
 type GameMode = 'single' | 'multiplayer';
+type RoomDifficulty = 'easy' | 'moderate' | 'hard' | 'very_hard';
 
 type LevelFilter = 'all' | 'unlocked' | 'completed';
 type ToastTone = 'neutral' | 'success' | 'warning';
@@ -91,10 +95,29 @@ interface ActiveChallengeState {
   winnerUserId: number | null;
 }
 
+interface ActiveRoomState {
+  code: string;
+  totalRounds: number;
+  roundNumber: number;
+  maxPlayers: number;
+  championUserId: number | null;
+}
+
 interface ConsentState {
   acceptedAt: string;
   personalizedAds: boolean;
 }
+
+const ROOM_DIFFICULTY_OPTIONS: Array<{
+  value: RoomDifficulty;
+  label: string;
+  startLevel: number;
+}> = [
+  { value: 'easy', label: 'Easy', startLevel: 10 },
+  { value: 'moderate', label: 'Moderate', startLevel: 30 },
+  { value: 'hard', label: 'Hard', startLevel: 60 },
+  { value: 'very_hard', label: 'Very Hard', startLevel: 85 },
+];
 
 // ─── 100 Unique Levels ───────────────────────────────────────────────────────
 // Every level has a unique (width, height, p4, p3, p2, p1) combination.
@@ -301,6 +324,20 @@ function authErrorToMessage(error: unknown) {
     challenge_join_failed: 'Could not join challenge. Please try again.',
     challenge_fetch_failed: 'Could not load challenge details.',
     challenge_submit_failed: 'Could not submit challenge result.',
+    room_not_found: 'Room code not found.',
+    room_closed: 'This room is already in progress or finished.',
+    room_forbidden: 'You are not a participant in this room.',
+    room_not_host: 'Only the room host can start the tournament.',
+    room_not_enough_players: 'At least 2 players are required to start.',
+    room_full: 'This room is full.',
+    room_not_active: 'This room is not active right now.',
+    room_round_mismatch: 'Round is out of sync. Please refresh room state.',
+    room_round_not_found: 'Current round was not found.',
+    room_create_failed: 'Could not create room. Please try again.',
+    room_fetch_failed: 'Could not load room details.',
+    room_join_failed: 'Could not join room. Please try again.',
+    room_start_failed: 'Could not start room. Please try again.',
+    room_submit_failed: 'Could not submit round result.',
     request_failed_500: 'Server error while signing in. Try again.',
     request_failed_503: 'Auth service is not ready yet. Try again.',
   };
@@ -719,7 +756,6 @@ function StatsScreen({
 
 function MultiplayerScreen({
   user,
-  defaultLevel,
   onBack,
   onStartChallenge,
   onGuestBootstrap,
@@ -727,54 +763,109 @@ function MultiplayerScreen({
   onToast,
 }: {
   user: CloudUser | null;
-  defaultLevel: number;
   onBack: () => void;
-  onStartChallenge: (snapshot: MultiplayerChallengeSnapshot) => Promise<void>;
+  onStartChallenge: (snapshot: MultiplayerRoomSnapshot) => Promise<void>;
   onGuestBootstrap: () => Promise<boolean>;
   multiplayerStats: MultiplayerStats | null;
   onToast: (message: string, tone?: ToastTone) => void;
 }) {
-  const [levelId, setLevelId] = useState(defaultLevel);
+  const [difficulty, setDifficulty] = useState<RoomDifficulty>('moderate');
+  const [totalRounds, setTotalRounds] = useState(3);
   const [joinCode, setJoinCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [roomSnapshot, setRoomSnapshot] = useState<MultiplayerRoomSnapshot | null>(null);
   const [snapshot, setSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
   const [waitingForOtherReady, setWaitingForOtherReady] = useState(false);
   const launchedChallengeKeyRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    setLevelId(defaultLevel);
-  }, [defaultLevel]);
+  const selectedDifficulty = ROOM_DIFFICULTY_OPTIONS.find((option) => option.value === difficulty) ?? ROOM_DIFFICULTY_OPTIONS[1];
+  const difficultyStartLevel = selectedDifficulty.startLevel;
+  const difficultyEndLevel = Math.min(MAX_LEVEL, difficultyStartLevel + totalRounds - 1);
 
   useEffect(() => {
-    const code = new URLSearchParams(window.location.search).get('challenge');
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('room') ?? params.get('challenge');
     if (!code) return;
     setJoinCode(sanitizeCode(code));
   }, []);
 
   useEffect(() => {
     launchedChallengeKeyRef.current = null;
-  }, [snapshot?.challenge.code]);
+  }, [roomSnapshot?.room.code]);
 
   const sanitizeCode = (raw: string) => raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  const syncRoomUrl = (code: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', code);
+    window.history.replaceState({}, '', `${url.pathname}?${url.searchParams.toString()}`);
+  };
+
+  const mapRoomToChallengeSnapshot = useCallback((data: MultiplayerRoomSnapshot): MultiplayerChallengeSnapshot => {
+    const round = data.activeRound;
+    const submissions = new Map((round?.submissions ?? []).map((submission) => [submission.userId, submission]));
+    const roundWinnerUserId = round?.submissions.find((submission) => submission.placement === 1)?.userId ?? null;
+    const players = data.players.map((player) => {
+      const submission = submissions.get(player.userId);
+      const status: 'joined' | 'submitted' = submission ? 'submitted' : 'joined';
+      const didFinish = submission?.didFinish ?? null;
+      return {
+        userId: player.userId,
+        displayName: player.displayName,
+        provider: player.provider,
+        joinedAt: player.joinedAt,
+        readyAt: null,
+        status,
+        didWin: submission ? (didFinish ? submission.placement === 1 : false) : null,
+        elapsedSeconds: submission ? (didFinish ? submission.elapsedSeconds : null) : null,
+        remainingSeconds: submission ? (didFinish ? submission.remainingSeconds : null) : null,
+        submittedAt: submission ? submission.submittedAt : null,
+      };
+    });
+    return {
+      challenge: {
+        id: data.room.id,
+        code: data.room.code,
+        levelId: round?.levelId ?? data.room.levelId,
+        puzzleSeed: round?.puzzleSeed ?? '',
+        isRanked: data.room.isRanked,
+        status: data.room.status === 'finished' ? 'closed' : 'open',
+        startAt: round?.startAt ?? null,
+        winnerUserId: roundWinnerUserId,
+        endedAt: round?.endedAt ?? null,
+        createdAt: data.room.createdAt,
+        updatedAt: data.room.updatedAt,
+        closedAt: data.room.closedAt,
+        creator: {
+          id: data.room.host.id,
+          displayName: data.room.host.displayName,
+          provider: data.room.host.provider,
+        },
+      },
+      players,
+    };
+  }, []);
 
   const shareLink = snapshot
-    ? `${window.location.origin}/?challenge=${snapshot.challenge.code}`
+    ? `${window.location.origin}/?room=${snapshot.challenge.code}`
     : null;
-  const readyTarget = 2;
+  const readyTarget = roomSnapshot?.room.maxPlayers ?? 8;
   const playerCount = snapshot?.players.length ?? 0;
   const readyCount = snapshot?.players.filter((player) => player.status === 'ready' || player.status === 'submitted').length ?? 0;
   const readyPercent = Math.round((Math.min(readyCount, readyTarget) / readyTarget) * 100);
   const readinessLabel = playerCount < readyTarget
     ? `Players ${playerCount}/${readyTarget}`
     : `Ready ${readyCount}/${readyTarget}`;
+  const isHost = Boolean(user && roomSnapshot && roomSnapshot.room.host.id === user.id);
 
   const canUseMultiplayer = Boolean(user);
 
-  const launchChallengeIfStarted = useCallback(async (nextSnapshot: MultiplayerChallengeSnapshot) => {
-    if (!nextSnapshot.challenge.startAt) return;
-    const launchKey = `${nextSnapshot.challenge.code}:${nextSnapshot.challenge.startAt}`;
+  const launchChallengeIfStarted = useCallback(async (nextSnapshot: MultiplayerRoomSnapshot) => {
+    const startAt = nextSnapshot.activeRound?.startAt ?? null;
+    if (!startAt) return;
+    if (user && nextSnapshot.activeRound?.submissions.some((submission) => submission.userId === user.id)) return;
+    const launchKey = `${nextSnapshot.room.code}:${nextSnapshot.activeRound?.roundNumber ?? 0}:${startAt}`;
     if (launchedChallengeKeyRef.current === launchKey) return;
     launchedChallengeKeyRef.current = launchKey;
     setWaitingForOtherReady(false);
@@ -787,7 +878,7 @@ function MultiplayerScreen({
     } finally {
       setLaunching(false);
     }
-  }, [onStartChallenge]);
+  }, [onStartChallenge, user]);
 
   const ensureMultiplayerAuth = async () => {
     if (canUseMultiplayer) return true;
@@ -806,12 +897,19 @@ function MultiplayerScreen({
     try {
       setLoading(true);
       setError(null);
-      const data = await createMultiplayerChallenge(levelId);
-      setSnapshot(data);
-      setJoinCode(data.challenge.code);
+      const data = await createMultiplayerRoom({ difficulty, totalRounds, maxPlayers: 8 });
+      setRoomSnapshot(data);
+      setSnapshot(mapRoomToChallengeSnapshot(data));
+      setJoinCode(data.room.code);
+      syncRoomUrl(data.room.code);
       setWaitingForOtherReady(false);
-      onToast(`Challenge ${data.challenge.code} created.`, 'success');
-      trackEvent('multiplayer_challenge_created', { level: levelId, code: data.challenge.code });
+      onToast(`Room ${data.room.code} created.`, 'success');
+      trackEvent('multiplayer_room_created', {
+        code: data.room.code,
+        difficulty,
+        start_level: difficultyStartLevel,
+        rounds: totalRounds,
+      });
     } catch (err) {
       setError(authErrorToMessage(err));
     } finally {
@@ -830,12 +928,14 @@ function MultiplayerScreen({
     try {
       setLoading(true);
       setError(null);
-      const data = await joinMultiplayerChallenge(code);
-      setSnapshot(data);
-      setJoinCode(data.challenge.code);
-      setWaitingForOtherReady(false);
-      onToast(`Joined challenge ${data.challenge.code}.`, 'success');
-      trackEvent('multiplayer_challenge_joined', { code: data.challenge.code });
+      const data = await joinMultiplayerRoom(code);
+      setRoomSnapshot(data);
+      setSnapshot(mapRoomToChallengeSnapshot(data));
+      setJoinCode(data.room.code);
+      syncRoomUrl(data.room.code);
+      setWaitingForOtherReady(data.room.status === 'open');
+      onToast(`Joined room ${data.room.code}.`, 'success');
+      trackEvent('multiplayer_room_joined', { code: data.room.code });
     } catch (err) {
       setError(authErrorToMessage(err));
     } finally {
@@ -844,16 +944,17 @@ function MultiplayerScreen({
   };
 
   const handleRefresh = async () => {
-    const code = snapshot?.challenge.code ?? sanitizeCode(joinCode);
+    const code = roomSnapshot?.room.code ?? sanitizeCode(joinCode);
     if (!code) return;
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchMultiplayerChallenge(code);
-      const nextSnapshot = { challenge: data.challenge, players: data.players };
-      setSnapshot(nextSnapshot);
-      setJoinCode(data.challenge.code);
-      await launchChallengeIfStarted(nextSnapshot);
+      const data = await fetchMultiplayerRoom(code);
+      setRoomSnapshot(data);
+      setSnapshot(mapRoomToChallengeSnapshot(data));
+      setJoinCode(data.room.code);
+      syncRoomUrl(data.room.code);
+      await launchChallengeIfStarted(data);
     } catch (err) {
       setError(authErrorToMessage(err));
     } finally {
@@ -878,43 +979,43 @@ function MultiplayerScreen({
     try {
       setLoading(true);
       setError(null);
-      const started = await startMultiplayerChallenge(snapshot.challenge.code);
-      setSnapshot(started);
-      setJoinCode(started.challenge.code);
-      if (started.challenge.startAt) {
+      if (!roomSnapshot) return;
+      const started = await startMultiplayerRoom(roomSnapshot.room.code);
+      setRoomSnapshot(started);
+      setSnapshot(mapRoomToChallengeSnapshot(started));
+      setJoinCode(started.room.code);
+      syncRoomUrl(started.room.code);
+      if (started.activeRound?.startAt) {
         await launchChallengeIfStarted(started);
       } else {
         setWaitingForOtherReady(true);
-        onToast('Waiting for the other player to press Play.', 'neutral');
+        onToast('Waiting for host to start.', 'neutral');
       }
     } catch (err) {
-      const code = err instanceof Error ? err.message : '';
-      if (code === 'challenge_waiting_for_opponent' || code === 'challenge_waiting_for_other_player') {
-        setWaitingForOtherReady(true);
-        setError(null);
-        onToast(authErrorToMessage(err), 'neutral');
-      } else {
-        setError(authErrorToMessage(err));
-      }
+      setError(authErrorToMessage(err));
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    const code = snapshot?.challenge.code;
+    const code = roomSnapshot?.room.code;
     if (!code) return;
     let active = true;
 
     const poll = async () => {
       try {
-        const data = await fetchMultiplayerChallenge(code);
+        const data = await fetchMultiplayerRoom(code);
         if (!active) return;
-        const nextSnapshot = { challenge: data.challenge, players: data.players };
-        setSnapshot(nextSnapshot);
-        setJoinCode(data.challenge.code);
-        if (nextSnapshot.challenge.startAt) {
-          await launchChallengeIfStarted(nextSnapshot);
+        setRoomSnapshot(data);
+        setSnapshot(mapRoomToChallengeSnapshot(data));
+        setJoinCode(data.room.code);
+        syncRoomUrl(data.room.code);
+        if (data.room.status === 'open' && (!isHost) && data.players.length >= 2) {
+          setWaitingForOtherReady(true);
+        }
+        if (data.activeRound?.startAt) {
+          await launchChallengeIfStarted(data);
         }
       } catch (err) {
         if (active) {
@@ -926,13 +1027,13 @@ function MultiplayerScreen({
     void poll();
     const interval = window.setInterval(() => {
       void poll();
-    }, waitingForOtherReady ? 900 : 1500);
+    }, roomSnapshot?.room.status === 'in_progress' ? 900 : 1500);
 
     return () => {
       active = false;
       window.clearInterval(interval);
     };
-  }, [launchChallengeIfStarted, snapshot?.challenge.code, waitingForOtherReady]);
+  }, [isHost, launchChallengeIfStarted, mapRoomToChallengeSnapshot, roomSnapshot?.room.code, roomSnapshot?.room.status]);
 
   return (
     <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
@@ -947,15 +1048,15 @@ function MultiplayerScreen({
               <ChevronLeft size={20} />
             </button>
             <div>
-              <h1 className="text-3xl font-black tracking-tight">Multiplayer Beta</h1>
-              <p className="text-sm text-gray-500">Create a challenge code or join a friend&apos;s code.</p>
+              <h1 className="text-3xl font-black tracking-tight">Multiplayer Rooms</h1>
+              <p className="text-sm text-gray-500">Create rooms up to 8 players and race for multi-round points.</p>
             </div>
           </div>
         </div>
 
         {!canUseMultiplayer && (
           <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            You can play multiplayer as guest. Guest matches are marked unranked.
+            You can play multiplayer as guest. Rooms with any guest are marked unranked.
             <button
               onClick={() => void onGuestBootstrap()}
               className="ml-2 inline-flex items-center rounded-lg bg-black px-3 py-1.5 text-xs font-bold text-white hover:bg-gray-800"
@@ -967,14 +1068,29 @@ function MultiplayerScreen({
 
         <div className="grid gap-4 md:grid-cols-2">
           <div className="bg-white rounded-3xl p-6 border border-black/5 shadow-sm">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Create Challenge</p>
-            <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Level</label>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Create Room</p>
+            <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Difficulty</label>
+            <select
+              value={difficulty}
+              onChange={(e) => setDifficulty(e.target.value as RoomDifficulty)}
+              className="mt-2 w-full mb-3 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+            >
+              {ROOM_DIFFICULTY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label} (starts at Level {option.startLevel})
+                </option>
+              ))}
+            </select>
+            <p className="mb-4 text-xs text-gray-500">
+              Round levels will run from {difficultyStartLevel} to {difficultyEndLevel}.
+            </p>
+            <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Rounds (1-10)</label>
             <input
               type="number"
               min={1}
-              max={MAX_LEVEL}
-              value={levelId}
-              onChange={(e) => setLevelId(Math.min(MAX_LEVEL, Math.max(1, Number(e.target.value || 1))))}
+              max={10}
+              value={totalRounds}
+              onChange={(e) => setTotalRounds(Math.min(10, Math.max(1, Number(e.target.value || 1))))}
               className="mt-2 w-full mb-4 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
             />
             <div className="flex gap-2">
@@ -983,13 +1099,13 @@ function MultiplayerScreen({
                 disabled={loading}
                 className="flex-1 py-2.5 rounded-xl bg-black text-white text-sm font-bold hover:bg-gray-800 disabled:opacity-50"
               >
-                {loading ? 'Working...' : 'Create Code'}
+                {loading ? 'Working...' : 'Create Room'}
               </button>
             </div>
           </div>
 
           <div className="bg-white rounded-3xl p-6 border border-black/5 shadow-sm">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Join Challenge</p>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Join Room</p>
             <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Code</label>
             <input
               type="text"
@@ -1003,7 +1119,7 @@ function MultiplayerScreen({
               disabled={loading}
               className="w-full py-2.5 rounded-xl bg-emerald-500 text-black text-sm font-bold hover:bg-emerald-400 disabled:opacity-50"
             >
-              {loading ? 'Working...' : 'Join Code'}
+              {loading ? 'Working...' : 'Join Room'}
             </button>
           </div>
         </div>
@@ -1018,7 +1134,7 @@ function MultiplayerScreen({
           <div className="mt-6 bg-gray-900 text-white rounded-[32px] p-6 shadow-2xl">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-5">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold mb-1">Active Challenge</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold mb-1">Active Room</p>
                 <h2 className="text-2xl font-black flex items-center gap-2">
                   <Link2 size={20} />
                   {snapshot.challenge.code}
@@ -1026,6 +1142,11 @@ function MultiplayerScreen({
                 <p className="text-sm text-gray-300 mt-1">
                   Level {snapshot.challenge.levelId} • {snapshot.challenge.status.toUpperCase()} • {snapshot.challenge.isRanked ? 'RANKED' : 'UNRANKED'}
                 </p>
+                {roomSnapshot && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    {ROOM_DIFFICULTY_OPTIONS.find((option) => option.value === roomSnapshot.room.difficulty)?.label ?? 'Moderate'} • Round {Math.max(1, roomSnapshot.room.currentRound)}/{roomSnapshot.room.totalRounds} • Players {roomSnapshot.players.length}/{roomSnapshot.room.maxPlayers}
+                  </p>
+                )}
               </div>
               <div className="flex gap-2">
                 <button
@@ -1041,19 +1162,21 @@ function MultiplayerScreen({
                 >
                   <Copy size={14} /> Copy Link
                 </button>
-                <button
-                  onClick={() => { void handleReadyAndPlay(); }}
-                  disabled={loading || launching}
-                  className="px-3 py-2 rounded-xl bg-white text-black text-xs font-bold hover:bg-gray-100 disabled:opacity-60"
-                >
-                  {loading || launching ? 'Working...' : (waitingForOtherReady ? 'Waiting...' : 'Play Challenge')}
-                </button>
+                {isHost && roomSnapshot?.room.status === 'open' && (
+                  <button
+                    onClick={() => { void handleReadyAndPlay(); }}
+                    disabled={loading || launching || (roomSnapshot?.players.length ?? 0) < 2}
+                    className="px-3 py-2 rounded-xl bg-white text-black text-xs font-bold hover:bg-gray-100 disabled:opacity-60"
+                  >
+                    {loading || launching ? 'Working...' : 'Start Tournament'}
+                  </button>
+                )}
               </div>
             </div>
 
             {waitingForOtherReady && !snapshot.challenge.startAt && (
               <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                You are ready. Waiting for the other player to press Play.
+                Waiting for host to start the tournament.
               </div>
             )}
 
@@ -1101,6 +1224,35 @@ function MultiplayerScreen({
                 </div>
               ))}
             </div>
+
+            {roomSnapshot && (
+              <div className="mt-4 rounded-2xl border border-white/15 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Leaderboard</p>
+                <div className="space-y-1 text-sm">
+                  {roomSnapshot.players.map((player, idx) => (
+                    <div key={player.userId} className="flex items-center justify-between">
+                      <span className="font-semibold text-gray-100">{idx + 1}. {player.displayName}</span>
+                      <span className="text-emerald-300 font-bold">{player.totalPoints} pts</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {roomSnapshot?.activeRound && (
+              <div className="mt-4 rounded-xl border border-white/15 bg-white/5 px-3 py-3">
+                <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.18em] text-gray-300 mb-2">
+                  <span>Round Progress</span>
+                  <span>{roomSnapshot.activeRound.submissions.length}/{roomSnapshot.players.length} Submitted</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-white/15 overflow-hidden">
+                  <div
+                    className="h-full bg-sky-400 rounded-full transition-all duration-300"
+                    style={{ width: `${roomSnapshot.players.length > 0 ? Math.round((roomSnapshot.activeRound.submissions.length / roomSnapshot.players.length) * 100) : 0}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1453,6 +1605,7 @@ export default function App() {
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [gameMode, setGameMode] = useState<GameMode>('single');
   const [activeChallenge, setActiveChallenge] = useState<ActiveChallengeState | null>(null);
+  const [activeRoom, setActiveRoom] = useState<ActiveRoomState | null>(null);
   const [multiplayerStats, setMultiplayerStats] = useState<MultiplayerStats | null>(null);
   const [multiplayerLockedUntil, setMultiplayerLockedUntil] = useState<number | null>(null);
   const [multiplayerRoundStartMs, setMultiplayerRoundStartMs] = useState<number | null>(null);
@@ -1518,16 +1671,66 @@ export default function App() {
     setPlayerStats((prev) => updater(prev));
   }, []);
 
+  const mapRoomToMatchSnapshot = useCallback((data: MultiplayerRoomSnapshot): MultiplayerChallengeSnapshot => {
+    const round = data.activeRound;
+    const submissions = new Map((round?.submissions ?? []).map((submission) => [submission.userId, submission]));
+    const roundWinnerUserId = round?.submissions.find((submission) => submission.placement === 1)?.userId ?? null;
+    return {
+      challenge: {
+        id: data.room.id,
+        code: data.room.code,
+        levelId: round?.levelId ?? data.room.levelId,
+        puzzleSeed: round?.puzzleSeed ?? '',
+        isRanked: data.room.isRanked,
+        status: data.room.status === 'finished' ? 'closed' : 'open',
+        startAt: round?.startAt ?? null,
+        winnerUserId: roundWinnerUserId,
+        endedAt: round?.endedAt ?? null,
+        createdAt: data.room.createdAt,
+        updatedAt: data.room.updatedAt,
+        closedAt: data.room.closedAt,
+        creator: {
+          id: data.room.host.id,
+          displayName: data.room.host.displayName,
+          provider: data.room.host.provider,
+        },
+      },
+      players: data.players.map((player) => {
+        const submission = submissions.get(player.userId);
+        const status: 'joined' | 'submitted' = submission ? 'submitted' : 'joined';
+        const didFinish = submission?.didFinish ?? null;
+        return {
+          userId: player.userId,
+          displayName: player.displayName,
+          provider: player.provider,
+          joinedAt: player.joinedAt,
+          readyAt: null,
+          status,
+          didWin: submission ? (didFinish ? submission.placement === 1 : false) : null,
+          elapsedSeconds: submission ? (didFinish ? submission.elapsedSeconds : null) : null,
+          remainingSeconds: submission ? (didFinish ? submission.remainingSeconds : null) : null,
+          submittedAt: submission ? submission.submittedAt : null,
+        };
+      }),
+    };
+  }, []);
+
   const submitChallengeResult = useCallback(async (didWin: boolean, remainingOverride?: number) => {
     if (!activeChallenge || hasSubmittedMatchResult) return null;
     const elapsedSeconds = Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000));
     const remainingSeconds = Math.max(0, Math.floor(remainingOverride ?? timeLeft));
     try {
-      const snapshot = await submitMultiplayerChallengeResult(activeChallenge.code, {
-        didWin,
-        elapsedSeconds,
-        remainingSeconds,
-      });
+      const snapshot = activeRoom
+        ? mapRoomToMatchSnapshot(await submitMultiplayerRoomRound(activeRoom.code, {
+          roundNumber: activeRoom.roundNumber,
+          elapsedSeconds,
+          remainingSeconds,
+        }))
+        : await submitMultiplayerChallengeResult(activeChallenge.code, {
+          didWin,
+          elapsedSeconds,
+          remainingSeconds,
+        });
       setHasSubmittedMatchResult(true);
       setMatchSnapshot(snapshot);
       setActiveChallenge({
@@ -1547,7 +1750,7 @@ export default function App() {
       setAuthError(authErrorToMessage(error));
       return null;
     }
-  }, [activeChallenge, authUser, hasSubmittedMatchResult, timeLeft]);
+  }, [activeChallenge, activeRoom, authUser, hasSubmittedMatchResult, mapRoomToMatchSnapshot, timeLeft]);
 
   const applyConsent = useCallback((personalizedAds: boolean) => {
     const nextConsent: ConsentState = {
@@ -1677,6 +1880,7 @@ export default function App() {
       setAuthError(null);
       setMultiplayerStats(null);
       setActiveChallenge(null);
+      setActiveRoom(null);
       setGameMode('single');
       setMatchSnapshot(null);
       setHasSubmittedMatchResult(false);
@@ -1700,8 +1904,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const challengeCode = new URLSearchParams(window.location.search).get('challenge');
-    if (!challengeCode) return;
+    const params = new URLSearchParams(window.location.search);
+    const roomCode = params.get('room');
+    const challengeCode = params.get('challenge');
+    if (!roomCode && !challengeCode) return;
     setScreen('multiplayer');
   }, []);
 
@@ -1837,26 +2043,60 @@ export default function App() {
     let active = true;
     const poll = async () => {
       try {
-        const latest = await fetchMultiplayerChallenge(activeChallenge.code);
-        if (!active) return;
-        const normalized: ActiveChallengeState = {
-          code: latest.challenge.code,
-          levelId: latest.challenge.levelId,
-          puzzleSeed: latest.challenge.puzzleSeed,
-          isRanked: latest.challenge.isRanked,
-          startAt: latest.challenge.startAt,
-          winnerUserId: latest.challenge.winnerUserId,
-        };
-        setActiveChallenge(normalized);
-        setMatchSnapshot({ challenge: latest.challenge, players: latest.players });
+        if (activeRoom) {
+          const latestRoom = await fetchMultiplayerRoom(activeRoom.code);
+          if (!active) return;
+          const mapped = mapRoomToMatchSnapshot(latestRoom);
+          setMatchSnapshot(mapped);
+          const round = latestRoom.activeRound;
+          if (round) {
+            setActiveChallenge({
+              code: latestRoom.room.code,
+              levelId: round.levelId,
+              puzzleSeed: round.puzzleSeed,
+              isRanked: latestRoom.room.isRanked,
+              startAt: round.startAt,
+              winnerUserId: latestRoom.room.championUserId,
+            });
+            setActiveRoom({
+              code: latestRoom.room.code,
+              totalRounds: latestRoom.room.totalRounds,
+              roundNumber: round.roundNumber,
+              maxPlayers: latestRoom.room.maxPlayers,
+              championUserId: latestRoom.room.championUserId,
+            });
+          }
+          const roundWinner = round?.submissions.find((submission) => submission.placement === 1)?.userId ?? null;
+          if (roundWinner && roundWinner !== authUser.id && !isWin && !isGameOver) {
+            setIsActive(false);
+            setIsGameOver(true);
+            showToast('Another player finished first this round.', 'warning');
+            if (!hasSubmittedMatchResult) {
+              void submitChallengeResult(false);
+            }
+          }
+        } else {
+          const latest = await fetchMultiplayerChallenge(activeChallenge.code);
+          if (!active) return;
+          const normalized: ActiveChallengeState = {
+            code: latest.challenge.code,
+            levelId: latest.challenge.levelId,
+            puzzleSeed: latest.challenge.puzzleSeed,
+            isRanked: latest.challenge.isRanked,
+            startAt: latest.challenge.startAt,
+            winnerUserId: latest.challenge.winnerUserId,
+          };
+          setActiveChallenge(normalized);
+          setMatchSnapshot({ challenge: latest.challenge, players: latest.players });
 
-        const winnerId = latest.challenge.winnerUserId;
-        if (winnerId && winnerId !== authUser.id && !isWin && !isGameOver) {
-          setIsActive(false);
-          setIsGameOver(true);
-          showToast('Opponent finished first.', 'warning');
-          if (!hasSubmittedMatchResult) {
-            void submitChallengeResult(false);
+          const winnerId = latest.challenge.winnerUserId;
+          if (winnerId && winnerId !== authUser.id && !isWin && !isGameOver) {
+            setIsActive(false);
+            setIsGameOver(true);
+            showToast('Opponent finished first.', 'warning');
+            if (!hasSubmittedMatchResult) {
+              void submitChallengeResult(false);
+            }
           }
         }
       } catch {
@@ -1873,7 +2113,7 @@ export default function App() {
       active = false;
       window.clearInterval(interval);
     };
-  }, [isMultiplayerRound, activeChallenge, authUser, isWin, isGameOver, hasSubmittedMatchResult, submitChallengeResult, showToast]);
+  }, [isMultiplayerRound, activeChallenge, activeRoom, authUser, hasSubmittedMatchResult, isGameOver, isWin, mapRoomToMatchSnapshot, showToast, submitChallengeResult]);
 
   const markLevelComplete = useCallback((lvl: number) => {
     setCompletedLevels(prev => {
@@ -2420,6 +2660,7 @@ export default function App() {
 
   const startLevel = useCallback((lvl: number) => {
     setActiveChallenge(null);
+    setActiveRoom(null);
     setGameMode('single');
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
@@ -2429,6 +2670,7 @@ export default function App() {
 
   const continueFromLastLevel = useCallback(() => {
     setActiveChallenge(null);
+    setActiveRoom(null);
     setGameMode('single');
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
@@ -2436,29 +2678,36 @@ export default function App() {
     setScreen('game');
   }, [initGame, singlePlayerLevel]);
 
-  const startChallengeGame = useCallback(async (snapshot: MultiplayerChallengeSnapshot) => {
+  const startChallengeGame = useCallback(async (snapshot: MultiplayerRoomSnapshot) => {
+    const round = snapshot.activeRound;
+    if (!round) return;
     const challengeState: ActiveChallengeState = {
-      code: snapshot.challenge.code,
-      levelId: snapshot.challenge.levelId,
-      puzzleSeed: snapshot.challenge.puzzleSeed,
-      isRanked: snapshot.challenge.isRanked,
-      startAt: snapshot.challenge.startAt,
-      winnerUserId: snapshot.challenge.winnerUserId,
+      code: snapshot.room.code,
+      levelId: round.levelId,
+      puzzleSeed: round.puzzleSeed,
+      isRanked: snapshot.room.isRanked,
+      startAt: round.startAt,
+      winnerUserId: snapshot.room.championUserId,
     };
+    setActiveRoom({
+      code: snapshot.room.code,
+      totalRounds: snapshot.room.totalRounds,
+      roundNumber: round.roundNumber,
+      maxPlayers: snapshot.room.maxPlayers,
+      championUserId: snapshot.room.championUserId,
+    });
     setActiveChallenge(challengeState);
     setMatchSnapshot(null);
     setHasSubmittedMatchResult(false);
-    await initGame(snapshot.challenge.levelId, 'start', {
+    await initGame(round.levelId, 'start', {
       mode: 'multiplayer',
-      puzzleSeed: snapshot.challenge.puzzleSeed,
-      startAt: snapshot.challenge.startAt,
+      puzzleSeed: round.puzzleSeed,
+      startAt: round.startAt,
     });
     setScreen('game');
-    if (snapshot.challenge.startAt) {
-      const msLeft = Date.parse(snapshot.challenge.startAt) - Date.now();
-      if (msLeft > 0) {
-        showToast(`Match starts in ${Math.ceil(msLeft / 1000)}s`, 'neutral');
-      }
+    const msLeft = Date.parse(round.startAt) - Date.now();
+    if (msLeft > 0) {
+      showToast(`Round starts in ${Math.ceil(msLeft / 1000)}s`, 'neutral');
     }
   }, [initGame, showToast]);
 
@@ -2500,7 +2749,6 @@ export default function App() {
       <>
         <MultiplayerScreen
           user={authUser}
-          defaultLevel={singlePlayerLevel}
           onBack={() => setScreen('menu')}
           onStartChallenge={startChallengeGame}
           onGuestBootstrap={handleGuestLogin}
@@ -2876,7 +3124,7 @@ export default function App() {
                                   ? (isWinner
                                     ? `Won ${player.elapsedSeconds !== null ? `${player.elapsedSeconds}s` : ''}`.trim()
                                     : 'DNF')
-                                  : (player.elapsedSeconds !== null ? `${player.elapsedSeconds}s` : 'No finish')}
+                                  : (player.elapsedSeconds !== null ? `${player.elapsedSeconds}s` : 'DNF')}
                               </span>
                             </div>
                           );
