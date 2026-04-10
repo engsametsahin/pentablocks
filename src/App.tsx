@@ -3291,17 +3291,23 @@ export default function App() {
                     <div className="space-y-2 text-sm">
                       {(() => {
                         const winnerUserId = matchSnapshot?.challenge.winnerUserId ?? activeChallenge?.winnerUserId ?? null;
+                        const roundEnded = Boolean(matchSnapshot?.challenge.endedAt);
                         return (matchSnapshot?.players ?? []).map((player) => {
                           const isWinner = winnerUserId !== null && player.userId === winnerUserId;
+                          let timeLabel = 'In game';
+                          if (player.elapsedSeconds !== null) {
+                            timeLabel = isWinner ? `Won ${player.elapsedSeconds}s` : `${player.elapsedSeconds}s`;
+                          } else if (roundEnded) {
+                            timeLabel = 'DNF';
+                          }
                           return (
                             <div key={player.userId} className="flex items-center justify-between">
                               <span className="font-bold text-gray-700">{player.displayName}</span>
-                              <span className={cn('font-semibold', isWinner ? 'text-emerald-600' : 'text-gray-500')}>
-                                {winnerUserId !== null
-                                  ? (isWinner
-                                    ? `Won ${player.elapsedSeconds !== null ? `${player.elapsedSeconds}s` : ''}`.trim()
-                                    : 'DNF')
-                                  : (player.elapsedSeconds !== null ? `${player.elapsedSeconds}s` : 'DNF')}
+                              <span className={cn(
+                                'font-semibold',
+                                isWinner ? 'text-emerald-600' : (timeLabel === 'In game' ? 'text-blue-600' : 'text-gray-500'),
+                              )}>
+                                {timeLabel}
                               </span>
                             </div>
                           );
