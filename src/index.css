@@ -5,3 +5,47 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
+
+:root.dark {
+  color-scheme: dark;
+}
+
+:root.dark body {
+  background: #0b0f17;
+  color: #f3f4f6;
+}
+
+:root.dark [class~="bg-white"] {
+  background-color: #111827;
+}
+
+:root.dark [class~="bg-gray-50"] {
+  background-color: #1f2937;
+}
+
+:root.dark [class~="bg-gray-100"] {
+  background-color: #374151;
+}
+
+:root.dark [class~="text-black"] {
+  color: #f9fafb;
+}
+
+:root.dark [class~="text-gray-500"] {
+  color: #94a3b8;
+}
+
+:root.dark [class~="text-gray-400"] {
+  color: #9ca3af;
+}
+
+:root.dark [class~="text-gray-300"] {
+  color: #cbd5e1;
+}
+
+:root.dark [class~="border-black/5"],
+:root.dark [class~="border-black/10"],
+:root.dark [class~="border-gray-100"],
+:root.dark [class~="border-gray-200"] {
+  border-color: rgb(148 163 184 / 0.22);
+}

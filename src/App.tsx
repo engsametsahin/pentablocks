@@ -38,6 +38,7 @@ const LOCAL_COMPLETED_KEY = 'katamino-completed';
 const LOCAL_BEST_TIMES_KEY = 'katamino-best-times';
 const LOCAL_PLAYER_STATS_KEY = 'katamino-player-stats';
 const LOCAL_LAST_LEVEL_KEY = 'katamino-last-level';
+const THEME_MODE_KEY = 'pentablocks-theme-mode';
 const DEFAULT_PLAYER_STATS: PlayerStats = {
   gamesStarted: 0,
   wins: 0,
@@ -50,6 +51,7 @@ const DEFAULT_PLAYER_STATS: PlayerStats = {
 type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer';
 type GameMode = 'single' | 'multiplayer';
 type RoomDifficulty = 'easy' | 'moderate' | 'hard' | 'very_hard';
+type ThemeMode = 'dark' | 'light' | 'auto';
 
 type LevelFilter = 'all' | 'unlocked' | 'completed';
 type ToastTone = 'neutral' | 'success' | 'warning';
@@ -306,6 +308,16 @@ function readLocalLastLevel() {
   }
 }
 
+function readThemeMode(): ThemeMode {
+  try {
+    const saved = localStorage.getItem(THEME_MODE_KEY);
+    if (saved === 'dark' || saved === 'light' || saved === 'auto') return saved;
+    return 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+
 function authErrorToMessage(error: unknown) {
   const code = error instanceof Error ? error.message : 'unknown_error';
   const map: Record<string, string> = {
@@ -379,6 +391,36 @@ function formatMultiplayerTimeLabel(
   return 'In game';
 }
 
+function ThemePicker({
+  themeMode,
+  resolvedTheme,
+  onChange,
+}: {
+  themeMode: ThemeMode;
+  resolvedTheme: 'dark' | 'light';
+  onChange: (mode: ThemeMode) => void;
+}) {
+  return (
+    <div className="fixed top-4 right-4 z-[90]">
+      <div className="rounded-xl border border-black/10 bg-white/90 backdrop-blur px-3 py-2 shadow-sm">
+        <p className="text-[9px] uppercase tracking-[0.16em] text-gray-400 font-bold mb-1">
+          Theme: {resolvedTheme === 'dark' ? 'Dark' : 'Light'}
+        </p>
+        <select
+          value={themeMode}
+          onChange={(e) => onChange(e.target.value as ThemeMode)}
+          className="text-xs font-semibold rounded-md border border-black/10 px-2 py-1 bg-white"
+          aria-label="Theme mode"
+        >
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+          <option value="auto">Auto (System)</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+
 // ─── Menu Screen ──────────────────────────────────────────────────────────────
 function MenuScreen({
   onSinglePlayer,
@@ -386,15 +428,20 @@ function MenuScreen({
   continueLevel,
   onStats,
   onMultiplayer,
+  resolvedTheme,
 }: {
   onSinglePlayer: () => void;
   onContinue?: () => void;
   continueLevel?: number;
   onStats: () => void;
   onMultiplayer: () => void;
+  resolvedTheme: 'dark' | 'light';
 }) {
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-8">
+    <div className={cn(
+      'min-h-screen flex flex-col items-center justify-center p-8',
+      resolvedTheme === 'dark' ? 'bg-black text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]',
+    )}>
       <motion.div
         initial={{ opacity: 0, y: -40 }}
         animate={{ opacity: 1, y: 0 }}
@@ -402,7 +449,12 @@ function MenuScreen({
         className="text-center mb-16"
       >
         <h1 className="text-8xl font-black tracking-tighter mb-3 select-none">PENTABLOCKS</h1>
-        <p className="text-gray-500 uppercase tracking-[0.3em] text-xs font-bold">Tetromino Puzzle Challenge</p>
+        <p className={cn(
+          'uppercase tracking-[0.3em] text-xs font-bold',
+          resolvedTheme === 'dark' ? 'text-gray-500' : 'text-gray-600',
+        )}>
+          Tetromino Puzzle Challenge
+        </p>
       </motion.div>
 
       <motion.div
@@ -421,7 +473,12 @@ function MenuScreen({
         )}
         <button
           onClick={onSinglePlayer}
-          className="w-full py-5 bg-white text-black rounded-2xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-gray-100 transition-all active:scale-95"
+          className={cn(
+            'w-full py-5 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 transition-all active:scale-95',
+            resolvedTheme === 'dark'
+              ? 'bg-white text-black hover:bg-gray-100'
+              : 'bg-white text-black hover:bg-gray-100 border border-black/10',
+          )}
         >
           <User size={22} /> Single Player
         </button>
@@ -433,7 +490,12 @@ function MenuScreen({
         </button>
         <button
           onClick={onMultiplayer}
-          className="relative w-full py-5 bg-white/10 text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-white/20 transition-all active:scale-95 overflow-hidden border border-white/20"
+          className={cn(
+            'relative w-full py-5 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 transition-all active:scale-95 overflow-hidden',
+            resolvedTheme === 'dark'
+              ? 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
+              : 'bg-black/10 text-[#1a1a1a] hover:bg-black/20 border border-black/20',
+          )}
         >
           <Users size={22} /> Multiplayer
           <span className="absolute top-2 right-3 text-[10px] bg-emerald-400 text-black px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Beta</span>
@@ -444,7 +506,10 @@ function MenuScreen({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.5 }}
-        className="mt-20 text-gray-700 text-[10px] uppercase tracking-[0.2em] font-bold"
+        className={cn(
+          'mt-20 text-[10px] uppercase tracking-[0.2em] font-bold',
+          resolvedTheme === 'dark' ? 'text-gray-700' : 'text-gray-500',
+        )}
       >
         A Game by TGS LABS
       </motion.p>
@@ -1646,6 +1711,11 @@ function ErrorModal({ message, onClose }: { message: string; onClose: () => void
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState<Screen>('menu');
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
   const [completedLevels, setCompletedLevels] = useState<Set<number>>(new Set<number>());
 
   const [availablePieces, setAvailablePieces] = useState<Piece[]>([]);
@@ -1717,6 +1787,9 @@ export default function App() {
   const multiplayerCountdownSeconds = isMultiplayerLocked && multiplayerLockedUntil !== null
     ? Math.max(0, Math.ceil((multiplayerLockedUntil - nowTs) / 1000))
     : 0;
+  const resolvedTheme: 'dark' | 'light' = themeMode === 'auto'
+    ? (systemPrefersDark ? 'dark' : 'light')
+    : themeMode;
 
   // Count only pieces fully inside the grid with no overlap
   const seatedPiecesCount = (() => {
@@ -2019,6 +2092,31 @@ export default function App() {
     setIsFirstSession(safeCount === 0);
     trackEvent('session_start', { session_number: nextCount, first_session: safeCount === 0 });
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (event: MediaQueryListEvent) => {
+      setSystemPrefersDark(event.matches);
+    };
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', onChange);
+      return () => media.removeEventListener('change', onChange);
+    }
+    media.addListener(onChange);
+    return () => media.removeListener(onChange);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THEME_MODE_KEY, themeMode);
+    } catch {
+      // no-op
+    }
+    const root = document.documentElement;
+    root.classList.toggle('dark', resolvedTheme === 'dark');
+    root.style.colorScheme = resolvedTheme;
+  }, [themeMode, resolvedTheme]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -3025,7 +3123,9 @@ export default function App() {
           onSinglePlayer={() => setScreen('levelSelect')}
           onStats={() => setScreen('stats')}
           onMultiplayer={() => setScreen('multiplayer')}
+          resolvedTheme={resolvedTheme}
         />
+        <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
         <AccountPanel
           user={authUser}
           authLoading={authLoading}
@@ -3060,6 +3160,7 @@ export default function App() {
           multiplayerStats={multiplayerStats}
           onToast={showToast}
         />
+        <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
         {!consent && (
           <ConsentBanner
             onAcceptPersonalized={() => applyConsent(true)}
@@ -3080,6 +3181,7 @@ export default function App() {
           onBack={() => setScreen('menu')}
           onStats={() => setScreen('stats')}
         />
+        <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
         {!consent && (
           <ConsentBanner
             onAcceptPersonalized={() => applyConsent(true)}
@@ -3100,6 +3202,7 @@ export default function App() {
           onBack={() => setScreen('menu')}
           onPlay={() => setScreen('levelSelect')}
         />
+        <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
         {!consent && (
           <ConsentBanner
             onAcceptPersonalized={() => applyConsent(true)}
@@ -3116,12 +3219,16 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen bg-[#f5f5f5] text-[#1a1a1a] font-sans p-4 md:p-8 flex flex-col items-center select-none"
+      className={cn(
+        'min-h-screen font-sans p-4 md:p-8 flex flex-col items-center select-none',
+        resolvedTheme === 'dark' ? 'bg-[#0b0f17] text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]',
+      )}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
     >
+      <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
       {/* Header */}
       <div className="w-full max-w-4xl flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
         <div className="flex items-center gap-4">
