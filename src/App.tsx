@@ -3063,26 +3063,55 @@ export default function App() {
     }
   }, []);
 
-  // Release drag if mouse leaves window
+  // Release drag if mouse/touch leaves window or target unmounts.
+  // Touch events stick to the original target — if that DOM node is removed
+  // (e.g. stash piece unmounts when moved to placedPieces), the React
+  // onTouchMove on the container never fires.  Window-level listeners catch
+  // these orphaned events so the drag keeps working.
   useEffect(() => {
-    window.addEventListener('mouseup', handlePointerUp);
-    return () => window.removeEventListener('mouseup', handlePointerUp);
-  }, [handlePointerUp]);
-
-  // Prevent accidental page scroll while actively dragging on mobile.
-  useEffect(() => {
-    const preventTouchScroll = (event: TouchEvent) => {
+    const onWindowTouchMove = (event: TouchEvent) => {
       if (screen !== 'game') return;
       if (isDraggingRef.current || touchGestureRef.current !== null) {
         event.preventDefault();
       }
+      if (!isDraggingRef.current) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+
+      const gesture = touchGestureRef.current;
+      if (gesture && !gesture.moved) {
+        const distance = Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY);
+        if (distance >= TOUCH_DRAG_THRESHOLD_PX) {
+          gesture.moved = true;
+          clearTouchLongPressTimer();
+        }
+      }
+      handlePointerMove(touch.clientX, touch.clientY);
     };
 
-    window.addEventListener('touchmove', preventTouchScroll, { passive: false });
-    return () => {
-      window.removeEventListener('touchmove', preventTouchScroll);
+    const onWindowTouchEnd = () => {
+      if (screen !== 'game') return;
+      const gesture = touchGestureRef.current;
+      clearTouchLongPressTimer();
+
+      if (gesture && gesture.isFromGrid && !gesture.moved && !gesture.longPressTriggered && !isGameOver && !isWin) {
+        handleRotate(gesture.id);
+      }
+      touchGestureRef.current = null;
+      handlePointerUp();
     };
-  }, [screen]);
+
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchmove', onWindowTouchMove, { passive: false });
+    window.addEventListener('touchend', onWindowTouchEnd);
+    window.addEventListener('touchcancel', onWindowTouchEnd);
+    return () => {
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchmove', onWindowTouchMove);
+      window.removeEventListener('touchend', onWindowTouchEnd);
+      window.removeEventListener('touchcancel', onWindowTouchEnd);
+    };
+  }, [handlePointerUp, screen, clearTouchLongPressTimer, isGameOver, isWin, handleRotate]);
 
   // Lock page scroll on game screen for better mobile playability.
   useEffect(() => {
@@ -3124,8 +3153,11 @@ export default function App() {
     clearTouchLongPressTimer();
     touchGestureRef.current = null;
 
+    // If already dragging a different piece, cleanly end that drag first.
     if (isDraggingRef.current) {
-      handlePointerUp();
+      dragStartRef.current = null;
+      isDraggingRef.current = false;
+      setDraggedPiece(null);
     }
 
     handlePointerDown(touch.clientX, touch.clientY, id, isFromGrid, target);
