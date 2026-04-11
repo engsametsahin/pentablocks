@@ -198,20 +198,49 @@ const LEVEL_CONFIGS: LevelConfig[] = (() => {
 const MAX_LEVEL = LEVEL_CONFIGS.length; // 100
 
 const TIERS = [
-  { name: 'Spark',     range: [1, 10],   bg: 'bg-emerald-50',  border: 'border-emerald-200',  text: 'text-emerald-700',  dot: 'bg-emerald-500' },
-  { name: 'Flame',     range: [11, 20],  bg: 'bg-teal-50',     border: 'border-teal-200',     text: 'text-teal-700',     dot: 'bg-teal-500' },
-  { name: 'Ember',     range: [21, 30],  bg: 'bg-sky-50',      border: 'border-sky-200',      text: 'text-sky-700',      dot: 'bg-sky-500' },
-  { name: 'Blaze',     range: [31, 40],  bg: 'bg-blue-50',     border: 'border-blue-200',     text: 'text-blue-700',     dot: 'bg-blue-500' },
-  { name: 'Storm',     range: [41, 50],  bg: 'bg-indigo-50',   border: 'border-indigo-200',   text: 'text-indigo-700',   dot: 'bg-indigo-500' },
-  { name: 'Thunder',   range: [51, 60],  bg: 'bg-amber-50',    border: 'border-amber-200',    text: 'text-amber-700',    dot: 'bg-amber-500' },
-  { name: 'Cyclone',   range: [61, 70],  bg: 'bg-orange-50',   border: 'border-orange-200',   text: 'text-orange-700',   dot: 'bg-orange-500' },
-  { name: 'Titan',     range: [71, 80],  bg: 'bg-rose-50',     border: 'border-rose-200',     text: 'text-rose-700',     dot: 'bg-rose-500' },
-  { name: 'Legend',    range: [81, 90],  bg: 'bg-red-50',      border: 'border-red-200',      text: 'text-red-700',      dot: 'bg-red-500' },
-  { name: 'Champion',  range: [91, 100], bg: 'bg-purple-50',   border: 'border-purple-200',   text: 'text-purple-700',   dot: 'bg-purple-500' },
+  { name: 'Spark',     range: [1, 10],   bg: 'bg-emerald-50',  border: 'border-emerald-200',  text: 'text-emerald-700',  dot: 'bg-emerald-500',  darkBg: 'bg-emerald-950/40',  darkBorder: 'border-emerald-700/50',  darkText: 'text-emerald-400' },
+  { name: 'Flame',     range: [11, 20],  bg: 'bg-teal-50',     border: 'border-teal-200',     text: 'text-teal-700',     dot: 'bg-teal-500',     darkBg: 'bg-teal-950/40',     darkBorder: 'border-teal-700/50',     darkText: 'text-teal-400' },
+  { name: 'Ember',     range: [21, 30],  bg: 'bg-sky-50',      border: 'border-sky-200',      text: 'text-sky-700',      dot: 'bg-sky-500',      darkBg: 'bg-sky-950/40',      darkBorder: 'border-sky-700/50',      darkText: 'text-sky-400' },
+  { name: 'Blaze',     range: [31, 40],  bg: 'bg-blue-50',     border: 'border-blue-200',     text: 'text-blue-700',     dot: 'bg-blue-500',     darkBg: 'bg-blue-950/40',     darkBorder: 'border-blue-700/50',     darkText: 'text-blue-400' },
+  { name: 'Storm',     range: [41, 50],  bg: 'bg-indigo-50',   border: 'border-indigo-200',   text: 'text-indigo-700',   dot: 'bg-indigo-500',   darkBg: 'bg-indigo-950/40',   darkBorder: 'border-indigo-700/50',   darkText: 'text-indigo-400' },
+  { name: 'Thunder',   range: [51, 60],  bg: 'bg-amber-50',    border: 'border-amber-200',    text: 'text-amber-700',    dot: 'bg-amber-500',    darkBg: 'bg-amber-950/40',    darkBorder: 'border-amber-700/50',    darkText: 'text-amber-400' },
+  { name: 'Cyclone',   range: [61, 70],  bg: 'bg-orange-50',   border: 'border-orange-200',   text: 'text-orange-700',   dot: 'bg-orange-500',   darkBg: 'bg-orange-950/40',   darkBorder: 'border-orange-700/50',   darkText: 'text-orange-400' },
+  { name: 'Titan',     range: [71, 80],  bg: 'bg-rose-50',     border: 'border-rose-200',     text: 'text-rose-700',     dot: 'bg-rose-500',     darkBg: 'bg-rose-950/40',     darkBorder: 'border-rose-700/50',     darkText: 'text-rose-400' },
+  { name: 'Legend',    range: [81, 90],  bg: 'bg-red-50',      border: 'border-red-200',      text: 'text-red-700',      dot: 'bg-red-500',      darkBg: 'bg-red-950/40',      darkBorder: 'border-red-700/50',      darkText: 'text-red-400' },
+  { name: 'Champion',  range: [91, 100], bg: 'bg-purple-50',   border: 'border-purple-200',   text: 'text-purple-700',   dot: 'bg-purple-500',   darkBg: 'bg-purple-950/40',   darkBorder: 'border-purple-700/50',   darkText: 'text-purple-400' },
 ];
 
 function getTier(levelId: number) {
   return TIERS[Math.min(Math.floor((levelId - 1) / 10), TIERS.length - 1)];
+}
+
+/** Build inline style for a single block cell with a 2.5D beveled look */
+function blockCellStyle(color: string, size: number, left: number, top: number, opacity = 1): React.CSSProperties {
+  // Derive lighter and darker shades for the bevel
+  const r = parseInt(color.slice(1, 3), 16);
+  const g = parseInt(color.slice(3, 5), 16);
+  const b = parseInt(color.slice(5, 7), 16);
+  const lighter = `rgba(${Math.min(255, r + 70)},${Math.min(255, g + 70)},${Math.min(255, b + 70)},0.9)`;
+  const darker  = `rgba(${Math.max(0, r - 60)},${Math.max(0, g - 60)},${Math.max(0, b - 60)},0.95)`;
+  const glow    = `rgba(${r},${g},${b},0.35)`;
+
+  return {
+    position: 'absolute' as const,
+    left,
+    top,
+    width: size,
+    height: size,
+    backgroundColor: color,
+    borderRadius: 6,
+    opacity,
+    // 3-sided bevel: light top-left, dark bottom-right, strong outline
+    borderTop: `2.5px solid ${lighter}`,
+    borderLeft: `2.5px solid ${lighter}`,
+    borderBottom: `2.5px solid ${darker}`,
+    borderRight: `2.5px solid ${darker}`,
+    boxShadow: `inset 0 1px 2px ${lighter}, inset 0 -1px 2px ${darker}, 0 0 6px ${glow}`,
+    backgroundImage: `linear-gradient(135deg, rgba(255,255,255,0.18) 0%, transparent 50%, rgba(0,0,0,0.12) 100%)`,
+  };
 }
 
 function formatDuration(totalSeconds: number) {
@@ -524,13 +553,16 @@ function LevelSelectScreen({
   onSelectLevel,
   onBack,
   onStats,
+  resolvedTheme,
 }: {
   completedLevels: Set<number>;
   bestTimes: Record<number, number>;
   onSelectLevel: (level: number) => void;
   onBack: () => void;
   onStats: () => void;
+  resolvedTheme: 'dark' | 'light';
 }) {
+  const dark = resolvedTheme === 'dark';
   const [activeTier, setActiveTier] = useState(0);
   const [filter, setFilter] = useState<LevelFilter>('all');
 
@@ -545,55 +577,55 @@ function LevelSelectScreen({
   });
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
+    <div className={cn('min-h-screen p-6 md:p-10', dark ? 'bg-[#0b0f17] text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]')}>
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex flex-col gap-4 mb-8 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
             <button
               onClick={onBack}
-              className="p-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-all active:scale-95"
+              className={cn('p-3 rounded-xl transition-all active:scale-95', dark ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800')}
               aria-label="Back to menu"
             >
               <ChevronLeft size={20} />
             </button>
             <div>
               <h1 className="text-3xl font-black tracking-tight">Select Level</h1>
-              <p className="text-sm text-gray-500">{completedLevels.size} / {MAX_LEVEL} completed</p>
+              <p className={cn('text-sm', dark ? 'text-gray-400' : 'text-gray-500')}>{completedLevels.size} / {MAX_LEVEL} completed</p>
             </div>
           </div>
 
           <button
             onClick={onStats}
-            className="px-4 py-3 bg-white rounded-xl border border-black/10 hover:bg-gray-50 transition-all active:scale-95 flex items-center gap-2 font-bold text-sm"
+            className={cn('px-4 py-3 rounded-xl border transition-all active:scale-95 flex items-center gap-2 font-bold text-sm', dark ? 'bg-white/10 border-white/10 hover:bg-white/15' : 'bg-white border-black/10 hover:bg-gray-50')}
           >
             <BarChart3 size={18} /> View Stats
           </button>
         </div>
 
         <div className="grid gap-4 md:grid-cols-[1.5fr_1fr] mb-8">
-          <div className="bg-white rounded-3xl p-5 border border-black/5 shadow-sm">
+          <div className={cn('rounded-3xl p-5 border shadow-sm', dark ? 'bg-white/5 border-white/10' : 'bg-white border-black/5')}>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Tier Navigation</p>
             <div className="flex items-center gap-3 mb-4">
               <button
                 onClick={() => setActiveTier((prev) => Math.max(0, prev - 1))}
                 disabled={activeTier === 0}
-                className="p-2 rounded-xl border border-black/10 bg-white hover:bg-gray-50 disabled:opacity-30"
+                className={cn('p-2 rounded-xl border disabled:opacity-30', dark ? 'border-white/10 bg-white/5 hover:bg-white/10' : 'border-black/10 bg-white hover:bg-gray-50')}
                 aria-label="Previous tier"
               >
                 <ChevronLeft size={18} />
               </button>
-              <div className={cn('flex-1 rounded-2xl px-4 py-3 border', tier.bg, tier.border)}>
-                <p className={cn('text-[10px] uppercase tracking-[0.2em] font-bold mb-1', tier.text)}>
+              <div className={cn('flex-1 rounded-2xl px-4 py-3 border', dark ? tier.darkBg : tier.bg, dark ? tier.darkBorder : tier.border)}>
+                <p className={cn('text-[10px] uppercase tracking-[0.2em] font-bold mb-1', dark ? tier.darkText : tier.text)}>
                   Tier {activeTier + 1}
                 </p>
                 <p className="text-xl font-black">{tier.name}</p>
-                <p className="text-sm text-gray-500">Levels {tier.range[0]}-{tier.range[1]}</p>
+                <p className={cn('text-sm', dark ? 'text-gray-400' : 'text-gray-500')}>Levels {tier.range[0]}-{tier.range[1]}</p>
               </div>
               <button
                 onClick={() => setActiveTier((prev) => Math.min(TIERS.length - 1, prev + 1))}
                 disabled={activeTier === TIERS.length - 1}
-                className="p-2 rounded-xl border border-black/10 bg-white hover:bg-gray-50 disabled:opacity-30"
+                className={cn('p-2 rounded-xl border disabled:opacity-30', dark ? 'border-white/10 bg-white/5 hover:bg-white/10' : 'border-black/10 bg-white hover:bg-gray-50')}
                 aria-label="Next tier"
               >
                 <ChevronRight size={18} />
@@ -608,8 +640,8 @@ function LevelSelectScreen({
                   className={cn(
                     'px-3 py-2 rounded-full text-xs font-bold border transition-all',
                     index === activeTier
-                      ? cn(item.bg, item.border, item.text)
-                      : 'bg-white border-black/10 text-gray-500 hover:bg-gray-50'
+                      ? cn(dark ? item.darkBg : item.bg, dark ? item.darkBorder : item.border, dark ? item.darkText : item.text)
+                      : dark ? 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10' : 'bg-white border-black/10 text-gray-500 hover:bg-gray-50'
                   )}
                 >
                   {item.name}
@@ -618,7 +650,7 @@ function LevelSelectScreen({
             </div>
           </div>
 
-          <div className="bg-gray-900 text-white rounded-3xl p-5 shadow-xl">
+          <div className={cn('rounded-3xl p-5 shadow-xl', dark ? 'bg-white/5 border border-white/10 text-white' : 'bg-gray-900 text-white')}>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold mb-3">Visibility</p>
             <div className="flex flex-wrap gap-2 mb-4">
               {[
@@ -645,7 +677,7 @@ function LevelSelectScreen({
 
         <div className="mb-3 flex items-center gap-2">
           <div className={cn('w-2 h-2 rounded-full', tier.dot)} />
-          <h2 className={cn('text-xs font-bold uppercase tracking-widest', tier.text)}>{tier.name}</h2>
+          <h2 className={cn('text-xs font-bold uppercase tracking-widest', dark ? tier.darkText : tier.text)}>{tier.name}</h2>
         </div>
 
         {visibleLevels.length > 0 ? (
@@ -662,24 +694,24 @@ function LevelSelectScreen({
                   className={cn(
                     'relative p-4 rounded-2xl border-2 text-left transition-all min-h-28',
                     isUnlocked
-                      ? cn(tier.bg, tier.border, 'hover:shadow-md active:scale-95 cursor-pointer')
-                      : 'bg-gray-100 border-gray-200 opacity-40 cursor-not-allowed'
+                      ? cn(dark ? tier.darkBg : tier.bg, dark ? tier.darkBorder : tier.border, 'hover:shadow-md active:scale-95 cursor-pointer')
+                      : dark ? 'bg-white/5 border-white/10 opacity-40 cursor-not-allowed' : 'bg-gray-100 border-gray-200 opacity-40 cursor-not-allowed'
                   )}
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <span className={cn('text-[10px] font-black', isUnlocked ? tier.text : 'text-gray-400')}>
+                    <span className={cn('text-[10px] font-black', isUnlocked ? (dark ? tier.darkText : tier.text) : 'text-gray-400')}>
                       LV {cfg.id}
                     </span>
-                    {isCompleted && <Star size={12} className={tier.text} fill="currentColor" />}
+                    {isCompleted && <Star size={12} className={dark ? tier.darkText : tier.text} fill="currentColor" />}
                     {!isUnlocked && <Lock size={12} className="text-gray-400" />}
                   </div>
                   <p className="text-lg font-black leading-none mb-2">{subIndex}</p>
-                  <p className="text-[11px] text-gray-500">
+                  <p className={cn('text-[11px]', dark ? 'text-gray-400' : 'text-gray-500')}>
                     {cfg.width}x{cfg.height} board
                   </p>
-                  <p className="text-[11px] text-gray-500">{cfg.timeSeconds}s timer</p>
+                  <p className={cn('text-[11px]', dark ? 'text-gray-400' : 'text-gray-500')}>{cfg.timeSeconds}s timer</p>
                   {isCompleted && bestTimes[cfg.id] !== undefined && (
-                    <p className={cn('text-[10px] font-bold mt-2', tier.text)}>
+                    <p className={cn('text-[10px] font-bold mt-2', dark ? tier.darkText : tier.text)}>
                       Best {Math.floor(bestTimes[cfg.id] / 60)}:{String(bestTimes[cfg.id] % 60).padStart(2, '0')}
                     </p>
                   )}
@@ -688,7 +720,7 @@ function LevelSelectScreen({
             })}
           </div>
         ) : (
-          <div className="bg-white border border-dashed border-black/10 rounded-3xl p-8 text-center text-gray-500">
+          <div className={cn('border border-dashed rounded-3xl p-8 text-center', dark ? 'bg-white/5 border-white/10 text-gray-400' : 'bg-white border-black/10 text-gray-500')}>
             No levels match this filter in the current tier.
           </div>
         )}
@@ -703,13 +735,16 @@ function StatsScreen({
   playerStats,
   onBack,
   onPlay,
+  resolvedTheme,
 }: {
   completedLevels: Set<number>;
   bestTimes: Record<number, number>;
   playerStats: PlayerStats;
   onBack: () => void;
   onPlay: () => void;
+  resolvedTheme: 'dark' | 'light';
 }) {
+  const dark = resolvedTheme === 'dark';
   const completedCount = completedLevels.size;
   const unlockedCount = Math.min(completedCount + 1, MAX_LEVEL);
   const completionPercent = Math.round((completedCount / MAX_LEVEL) * 100);
@@ -729,21 +764,23 @@ function StatsScreen({
     return streak;
   })();
 
+  const cardCn = dark ? 'bg-white/5 border-white/10' : 'bg-white border-black/5';
+
   return (
-    <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
+    <div className={cn('min-h-screen p-6 md:p-10', dark ? 'bg-[#0b0f17] text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]')}>
       <div className="max-w-5xl mx-auto">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
           <div className="flex items-center gap-4">
             <button
               onClick={onBack}
-              className="p-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-all active:scale-95"
+              className={cn('p-3 rounded-xl transition-all active:scale-95', dark ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800')}
               aria-label="Back"
             >
               <ChevronLeft size={20} />
             </button>
             <div>
               <h1 className="text-3xl font-black tracking-tight">Player Stats</h1>
-              <p className="text-sm text-gray-500">A quick read on progression, pace, and replay habits.</p>
+              <p className={cn('text-sm', dark ? 'text-gray-400' : 'text-gray-500')}>A quick read on progression, pace, and replay habits.</p>
             </div>
           </div>
 
@@ -756,45 +793,45 @@ function StatsScreen({
         </div>
 
         <div className="grid gap-4 md:grid-cols-4 mb-8">
-          <div className="bg-white rounded-3xl p-5 border border-black/5 shadow-sm">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mb-3">
+          <div className={cn('rounded-3xl p-5 border shadow-sm', cardCn)}>
+            <div className={cn('w-10 h-10 rounded-2xl flex items-center justify-center mb-3', dark ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700')}>
               <Target size={20} />
             </div>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Completion</p>
             <p className="text-3xl font-black">{completionPercent}%</p>
-            <p className="text-sm text-gray-500 mt-1">{completedCount} of {MAX_LEVEL} levels cleared</p>
+            <p className={cn('text-sm mt-1', dark ? 'text-gray-400' : 'text-gray-500')}>{completedCount} of {MAX_LEVEL} levels cleared</p>
           </div>
 
-          <div className="bg-white rounded-3xl p-5 border border-black/5 shadow-sm">
-            <div className="w-10 h-10 rounded-2xl bg-sky-100 text-sky-700 flex items-center justify-center mb-3">
+          <div className={cn('rounded-3xl p-5 border shadow-sm', cardCn)}>
+            <div className={cn('w-10 h-10 rounded-2xl flex items-center justify-center mb-3', dark ? 'bg-sky-500/20 text-sky-400' : 'bg-sky-100 text-sky-700')}>
               <Zap size={20} />
             </div>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Best Pace</p>
             <p className="text-3xl font-black">{bestTimeValues.length}</p>
-            <p className="text-sm text-gray-500 mt-1">Completed levels with saved best times</p>
+            <p className={cn('text-sm mt-1', dark ? 'text-gray-400' : 'text-gray-500')}>Completed levels with saved best times</p>
           </div>
 
-          <div className="bg-white rounded-3xl p-5 border border-black/5 shadow-sm">
-            <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mb-3">
+          <div className={cn('rounded-3xl p-5 border shadow-sm', cardCn)}>
+            <div className={cn('w-10 h-10 rounded-2xl flex items-center justify-center mb-3', dark ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-700')}>
               <Medal size={20} />
             </div>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Win Rate</p>
             <p className="text-3xl font-black">{winRate}%</p>
-            <p className="text-sm text-gray-500 mt-1">{playerStats.wins} wins across {playerStats.gamesStarted} starts</p>
+            <p className={cn('text-sm mt-1', dark ? 'text-gray-400' : 'text-gray-500')}>{playerStats.wins} wins across {playerStats.gamesStarted} starts</p>
           </div>
 
-          <div className="bg-white rounded-3xl p-5 border border-black/5 shadow-sm">
-            <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center mb-3">
+          <div className={cn('rounded-3xl p-5 border shadow-sm', cardCn)}>
+            <div className={cn('w-10 h-10 rounded-2xl flex items-center justify-center mb-3', dark ? 'bg-rose-500/20 text-rose-400' : 'bg-rose-100 text-rose-700')}>
               <Timer size={20} />
             </div>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Time Played</p>
             <p className="text-3xl font-black">{formatDuration(playerStats.totalPlaySeconds)}</p>
-            <p className="text-sm text-gray-500 mt-1">Tracked from active in-level play</p>
+            <p className={cn('text-sm mt-1', dark ? 'text-gray-400' : 'text-gray-500')}>Tracked from active in-level play</p>
           </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-[1.3fr_1fr]">
-          <div className="bg-gray-900 text-white rounded-[32px] p-6 shadow-2xl">
+          <div className={cn('text-white rounded-[32px] p-6 shadow-2xl', dark ? 'bg-white/5 border border-white/10' : 'bg-gray-900')}>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold mb-4">Progress Snapshot</p>
             <div className="space-y-4">
               <div>
@@ -827,23 +864,23 @@ function StatsScreen({
             </div>
           </div>
 
-          <div className="bg-white rounded-[32px] p-6 border border-black/5 shadow-sm">
+          <div className={cn('rounded-[32px] p-6 border shadow-sm', cardCn)}>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-4">Session Details</p>
             <div className="space-y-4 text-sm">
               <div className="flex justify-between gap-4">
-                <span className="text-gray-500">Games started</span>
+                <span className={cn(dark ? 'text-gray-400' : 'text-gray-500')}>Games started</span>
                 <span className="font-bold">{playerStats.gamesStarted}</span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-gray-500">Losses</span>
+                <span className={cn(dark ? 'text-gray-400' : 'text-gray-500')}>Losses</span>
                 <span className="font-bold">{playerStats.losses}</span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-gray-500">Average best time left</span>
+                <span className={cn(dark ? 'text-gray-400' : 'text-gray-500')}>Average best time left</span>
                 <span className="font-bold">{bestTimeValues.length ? formatDuration(averageBest) : 'No clears yet'}</span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-gray-500">Latest unlocked level</span>
+                <span className={cn(dark ? 'text-gray-400' : 'text-gray-500')}>Latest unlocked level</span>
                 <span className="font-bold">LV {unlockedCount}</span>
               </div>
             </div>
@@ -2810,16 +2847,18 @@ export default function App() {
   }, []);
 
   const returnToStash = useCallback((id: string) => {
-    const piece = placedPieces.find((p) => p.id === id);
-    if (!piece) return;
-
-    // Keep updaters pure. In StrictMode, impure updaters can run twice and duplicate stash entries.
-    setPlacedPieces((prev) => prev.filter((p) => p.id !== id));
-    setAvailablePieces((prev) => {
-      if (prev.some((p) => p.id === id)) return prev;
-      return [...prev, { id: piece.id, name: piece.name, shape: piece.shape, color: piece.color }];
+    // Read from state updater to avoid stale closure over placedPieces
+    setPlacedPieces((prev) => {
+      const piece = prev.find((p) => p.id === id);
+      if (!piece) return prev;
+      // Use currentShape so rotation/flip is preserved when returning to stash
+      setAvailablePieces((ap) => {
+        if (ap.some((p) => p.id === id)) return ap;
+        return [...ap, { id: piece.id, name: piece.name, shape: piece.currentShape, color: piece.color }];
+      });
+      return prev.filter((p) => p.id !== id);
     });
-  }, [placedPieces]);
+  }, []);
 
   // Keyboard shortcuts — work during drag too
   useEffect(() => {
@@ -3180,6 +3219,7 @@ export default function App() {
           onSelectLevel={startLevel}
           onBack={() => setScreen('menu')}
           onStats={() => setScreen('stats')}
+          resolvedTheme={resolvedTheme}
         />
         <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
         {!consent && (
@@ -3201,6 +3241,7 @@ export default function App() {
           playerStats={playerStats}
           onBack={() => setScreen('menu')}
           onPlay={() => setScreen('levelSelect')}
+          resolvedTheme={resolvedTheme}
         />
         <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
         {!consent && (
@@ -3234,7 +3275,7 @@ export default function App() {
         <div className="flex items-center gap-4">
           <button
             onClick={goToLevelSelect}
-            className="p-3 bg-white border border-black/10 rounded-xl hover:bg-gray-100 transition-all active:scale-95"
+            className={cn('p-3 rounded-xl border transition-all active:scale-95', resolvedTheme === 'dark' ? 'bg-white/10 border-white/10 hover:bg-white/15' : 'bg-white border-black/10 hover:bg-gray-100')}
             aria-label={gameMode === 'multiplayer' ? 'Back to multiplayer' : 'Back to level select'}
           >
             <ChevronLeft size={20} />
@@ -3260,13 +3301,13 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-6 bg-white p-4 rounded-2xl shadow-sm border border-black/5">
+        <div className={cn('flex items-center gap-6 p-4 rounded-2xl shadow-sm border', resolvedTheme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-white border-black/5')}>
           <div className="flex flex-col items-center">
             <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Pieces</span>
             <span className="text-2xl font-mono font-bold text-center">{seatedPiecesCount}/{totalPiecesCount}</span>
           </div>
 
-          <div className="w-px h-10 bg-gray-100" />
+          <div className={cn('w-px h-10', resolvedTheme === 'dark' ? 'bg-white/10' : 'bg-gray-100')} />
 
           <div className="flex flex-col items-center">
             <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold mb-1">Time Left</span>
@@ -3276,13 +3317,13 @@ export default function App() {
             </div>
           </div>
 
-          <div className="w-px h-10 bg-gray-100" />
+          <div className={cn('w-px h-10', resolvedTheme === 'dark' ? 'bg-white/10' : 'bg-gray-100')} />
 
           {gameMode === 'multiplayer' ? (
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsScoreboardOpen(true)}
-                className="px-3 py-2 bg-white border border-black/10 rounded-xl hover:bg-gray-50 transition-all text-xs font-bold"
+                className={cn('px-3 py-2 rounded-xl border transition-all text-xs font-bold', resolvedTheme === 'dark' ? 'bg-white/10 border-white/10 hover:bg-white/15' : 'bg-white border-black/10 hover:bg-gray-50')}
               >
                 Scoreboard
               </button>
@@ -3299,7 +3340,7 @@ export default function App() {
               onClick={() => {
                 void initGame(undefined, 'restart', { mode: 'single' });
               }}
-              className="p-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-all active:scale-95"
+              className={cn('p-3 rounded-xl transition-all active:scale-95', resolvedTheme === 'dark' ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800')}
               aria-label="Start a new game"
             >
               <RefreshCw size={20} />
@@ -3313,13 +3354,13 @@ export default function App() {
 
         {/* Left: Controls */}
         <div className="w-full lg:w-48 flex flex-col gap-4">
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-black/5 flex flex-col gap-4">
+          <div className={cn('p-6 rounded-3xl shadow-sm border flex flex-col gap-4', resolvedTheme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-white border-black/5')}>
             <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400">Piece Controls</h3>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => selectedPieceId && handleRotate(selectedPieceId)}
                 disabled={!selectedPieceId}
-                className="flex flex-col items-center justify-center p-4 rounded-2xl border border-gray-100 hover:bg-gray-50 transition-all disabled:opacity-30"
+                className={cn('flex flex-col items-center justify-center p-4 rounded-2xl border transition-all disabled:opacity-30', resolvedTheme === 'dark' ? 'border-white/10 hover:bg-white/10' : 'border-gray-100 hover:bg-gray-50')}
                 aria-label="Rotate piece (R)"
               >
                 <RotateCw size={20} className="mb-2" />
@@ -3329,7 +3370,7 @@ export default function App() {
               <button
                 onClick={() => selectedPieceId && handleFlip(selectedPieceId)}
                 disabled={!selectedPieceId}
-                className="flex flex-col items-center justify-center p-4 rounded-2xl border border-gray-100 hover:bg-gray-50 transition-all disabled:opacity-30"
+                className={cn('flex flex-col items-center justify-center p-4 rounded-2xl border transition-all disabled:opacity-30', resolvedTheme === 'dark' ? 'border-white/10 hover:bg-white/10' : 'border-gray-100 hover:bg-gray-50')}
                 aria-label="Flip piece (F)"
               >
                 <FlipHorizontal size={20} className="mb-2" />
@@ -3340,7 +3381,7 @@ export default function App() {
             <button
               onClick={() => selectedPieceId && returnToStash(selectedPieceId)}
               disabled={!selectedPieceId}
-              className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-gray-400 hover:border-gray-400 hover:text-gray-600 transition-all text-xs font-bold uppercase disabled:opacity-30"
+              className={cn('w-full py-3 rounded-xl border-2 border-dashed transition-all text-xs font-bold uppercase disabled:opacity-30', resolvedTheme === 'dark' ? 'border-white/15 text-gray-400 hover:border-white/30 hover:text-gray-200' : 'border-gray-200 text-gray-400 hover:border-gray-400 hover:text-gray-600')}
               aria-label="Return piece to stash (Esc)"
             >
               Return to Stash
@@ -3348,7 +3389,7 @@ export default function App() {
             </button>
           </div>
 
-          <div className="bg-gray-900 text-white p-6 rounded-3xl shadow-xl">
+          <div className={cn('text-white p-6 rounded-3xl shadow-xl', resolvedTheme === 'dark' ? 'bg-white/5 border border-white/10' : 'bg-gray-900')}>
             <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">How to Play</h3>
             <ul className="text-xs space-y-2 text-gray-300">
               <li className="flex gap-2"><span className="text-emerald-400 font-bold">01</span> Drag pieces to the grid</li>
@@ -3363,12 +3404,12 @@ export default function App() {
           {/* Board */}
           <div
             ref={containerRef}
-            className="relative bg-white p-8 rounded-[40px] shadow-2xl border border-black/5 overflow-visible"
+            className={cn('relative p-8 rounded-[40px] shadow-2xl border overflow-visible', resolvedTheme === 'dark' ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/5')}
             style={{ width: gridWidth * CELL_SIZE + 64, height: gridHeight * CELL_SIZE + 64 }}
           >
             {/* Grid Background */}
             <div
-              className="grid border-2 border-gray-200 bg-gray-50"
+              className={cn('grid border-2', resolvedTheme === 'dark' ? 'border-white/15 bg-white/3' : 'border-gray-200 bg-gray-50')}
               style={{
                 gridTemplateColumns: `repeat(${gridWidth}, ${CELL_SIZE}px)`,
                 gridTemplateRows: `repeat(${gridHeight}, ${CELL_SIZE}px)`,
@@ -3386,10 +3427,12 @@ export default function App() {
                     const isDraggedCell = piece.currentShape.some(
                       (cell) => piece.position.x + cell.x === cx && piece.position.y + cell.y === cy
                     );
-                    if (isDraggedCell && dragValid !== null) highlight = dragValid ? 'bg-emerald-200/60' : 'bg-red-200/60';
+                    if (isDraggedCell && dragValid !== null) highlight = dragValid
+                      ? (resolvedTheme === 'dark' ? 'bg-emerald-500/30' : 'bg-emerald-200/60')
+                      : (resolvedTheme === 'dark' ? 'bg-red-500/30' : 'bg-red-200/60');
                   }
                 }
-                return <div key={`${cx},${cy}`} className={cn('border border-gray-200/50 transition-colors duration-75', highlight)} />;
+                return <div key={`${cx},${cy}`} className={cn('border transition-colors duration-75', resolvedTheme === 'dark' ? 'border-white/8' : 'border-gray-200/50', highlight)} />;
               })}
             </div>
 
@@ -3398,9 +3441,10 @@ export default function App() {
               <div
                 key={piece.id}
                 className={cn(
-                  'absolute transition-shadow touch-none',
+                  'absolute touch-none',
                   isWin ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
-                  !isWin && selectedPieceId === piece.id && 'z-10 ring-2 ring-black ring-offset-4 rounded-sm'
+                  !isWin && selectedPieceId === piece.id && 'z-10 ring-2 ring-offset-4 rounded-sm',
+                  !isWin && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                 )}
                 style={{ left: piece.position.x * CELL_SIZE + GRID_PADDING, top: piece.position.y * CELL_SIZE + GRID_PADDING, width: 0, height: 0 }}
                 onMouseDown={(e) => onMouseDown(e, piece.id, true)}
@@ -3409,16 +3453,13 @@ export default function App() {
                 {piece.currentShape.map((cell, i) => (
                   <div
                     key={i}
-                    className="absolute border border-black/10 shadow-inner"
-                    style={{
-                      left: cell.x * CELL_SIZE,
-                      top: cell.y * CELL_SIZE,
-                      width: CELL_SIZE,
-                      height: CELL_SIZE,
-                      backgroundColor: piece.color,
-                      borderRadius: '4px',
-                      opacity: draggedPiece?.id === piece.id && dragValid === false ? 0.6 : 1,
-                    }}
+                    style={blockCellStyle(
+                      piece.color,
+                      CELL_SIZE,
+                      cell.x * CELL_SIZE,
+                      cell.y * CELL_SIZE,
+                      draggedPiece?.id === piece.id && dragValid === false ? 0.6 : 1,
+                    )}
                   />
                 ))}
               </div>
@@ -3429,7 +3470,10 @@ export default function App() {
           {availablePieces.length > 0 && (
             <div className="mt-6 w-full">
               {!isActive && !isGameOver && !isWin && (
-                <p className="text-center text-[10px] bg-emerald-100 text-emerald-700 font-bold px-3 py-1 rounded-full animate-pulse mb-4 mx-auto w-fit">Click or drag to start!</p>
+                <p className={cn(
+                  'text-center text-[10px] font-bold px-3 py-1 rounded-full animate-pulse mb-4 mx-auto w-fit',
+                  resolvedTheme === 'dark' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700',
+                )}>Click or drag to start!</p>
               )}
               <div className="flex flex-wrap justify-center gap-6 px-4">
                 {availablePieces.map((piece) => (
@@ -3437,7 +3481,8 @@ export default function App() {
                     key={piece.id}
                     className={cn(
                       'relative cursor-grab hover:scale-105 transition-all touch-none rounded-lg',
-                      selectedPieceId === piece.id && 'ring-2 ring-black ring-offset-4 scale-105'
+                      selectedPieceId === piece.id && 'ring-2 ring-offset-4 scale-105',
+                      selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                     )}
                     style={{
                       width: Math.max(...piece.shape.map((p) => p.x)) * CELL_SIZE + CELL_SIZE,
@@ -3449,15 +3494,7 @@ export default function App() {
                     {piece.shape.map((cell, i) => (
                       <div
                         key={i}
-                        className="absolute border border-black/10 shadow-sm"
-                        style={{
-                          left: cell.x * CELL_SIZE,
-                          top: cell.y * CELL_SIZE,
-                          width: CELL_SIZE,
-                          height: CELL_SIZE,
-                          backgroundColor: piece.color,
-                          borderRadius: '4px',
-                        }}
+                        style={blockCellStyle(piece.color, CELL_SIZE, cell.x * CELL_SIZE, cell.y * CELL_SIZE)}
                       />
                     ))}
                   </div>

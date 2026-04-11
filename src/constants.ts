@@ -7,31 +7,31 @@ export interface Piece {
   color: string;
 }
 
-// Tetrominoes (4 squares)
+// Tetrominoes (4 squares) — vibrant, high-contrast palette
 const TETROMINOES: Piece[] = [
-  { id: 'I4', name: 'I', color: '#ef4444', shape: [{x:0,y:0}, {x:0,y:1}, {x:0,y:2}, {x:0,y:3}] },
-  { id: 'O4', name: 'O', color: '#f97316', shape: [{x:0,y:0}, {x:1,y:0}, {x:0,y:1}, {x:1,y:1}] },
-  { id: 'T4', name: 'T', color: '#f59e0b', shape: [{x:0,y:0}, {x:1,y:0}, {x:2,y:0}, {x:1,y:1}] },
-  { id: 'S4', name: 'S', color: '#eab308', shape: [{x:1,y:0}, {x:2,y:0}, {x:0,y:1}, {x:1,y:1}] },
-  { id: 'Z4', name: 'Z', color: '#84cc16', shape: [{x:0,y:0}, {x:1,y:0}, {x:1,y:1}, {x:2,y:1}] },
-  { id: 'J4', name: 'J', color: '#10b981', shape: [{x:1,y:0}, {x:1,y:1}, {x:0,y:2}, {x:1,y:2}] },
-  { id: 'L4', name: 'L', color: '#06b6d4', shape: [{x:0,y:0}, {x:0,y:1}, {x:0,y:2}, {x:1,y:2}] },
+  { id: 'I4', name: 'I', color: '#ff3b5c', shape: [{x:0,y:0}, {x:0,y:1}, {x:0,y:2}, {x:0,y:3}] },
+  { id: 'O4', name: 'O', color: '#ff9f1a', shape: [{x:0,y:0}, {x:1,y:0}, {x:0,y:1}, {x:1,y:1}] },
+  { id: 'T4', name: 'T', color: '#ffdd00', shape: [{x:0,y:0}, {x:1,y:0}, {x:2,y:0}, {x:1,y:1}] },
+  { id: 'S4', name: 'S', color: '#00e676', shape: [{x:1,y:0}, {x:2,y:0}, {x:0,y:1}, {x:1,y:1}] },
+  { id: 'Z4', name: 'Z', color: '#00d4ff', shape: [{x:0,y:0}, {x:1,y:0}, {x:1,y:1}, {x:2,y:1}] },
+  { id: 'J4', name: 'J', color: '#536dfe', shape: [{x:1,y:0}, {x:1,y:1}, {x:0,y:2}, {x:1,y:2}] },
+  { id: 'L4', name: 'L', color: '#e040fb', shape: [{x:0,y:0}, {x:0,y:1}, {x:0,y:2}, {x:1,y:2}] },
 ];
 
 // Trominoes (3 squares)
 const TROMINOES: Piece[] = [
-  { id: 'I3', name: 'I3', color: '#3b82f6', shape: [{x:0,y:0}, {x:0,y:1}, {x:0,y:2}] },
-  { id: 'L3', name: 'L3', color: '#6366f1', shape: [{x:0,y:0}, {x:0,y:1}, {x:1,y:1}] },
+  { id: 'I3', name: 'I3', color: '#00bfa5', shape: [{x:0,y:0}, {x:0,y:1}, {x:0,y:2}] },
+  { id: 'L3', name: 'L3', color: '#ff6e40', shape: [{x:0,y:0}, {x:0,y:1}, {x:1,y:1}] },
 ];
 
 // Domino (2 squares)
 const DOMINO: Piece[] = [
-  { id: 'I2', name: 'I2', color: '#8b5cf6', shape: [{x:0,y:0}, {x:0,y:1}] },
+  { id: 'I2', name: 'I2', color: '#7c4dff', shape: [{x:0,y:0}, {x:0,y:1}] },
 ];
 
 // Monomino (1 square)
 const MONOMINO: Piece[] = [
-  { id: 'I1', name: 'I1', color: '#a855f7', shape: [{x:0,y:0}] },
+  { id: 'I1', name: 'I1', color: '#ff4081', shape: [{x:0,y:0}] },
 ];
 
 export const ALL_PIECES: Piece[] = [...TETROMINOES, ...TROMINOES, ...DOMINO, ...MONOMINO];
