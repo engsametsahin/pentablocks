@@ -3013,18 +3013,39 @@ export default function App() {
     if (!isActive) setIsActive(true);
     setSelectedPieceId(id);
 
-    // Immediately start drag
-    const rect = target.getBoundingClientRect();
-    const offsetX = clientX - rect.left;
-    const offsetY = clientY - rect.top;
-    dragOffsetRef.current = { x: offsetX, y: offsetY };
-    dragStartRef.current = { x: clientX, y: clientY, id, isFromGrid, target };
-    isDraggingRef.current = true;
-    setDraggedPiece({ id, offset: { x: offsetX, y: offsetY } });
-
-    if (!isFromGrid) {
+    if (isFromGrid) {
+      // For grid pieces the wrapper is 0×0 at the piece origin — offset is
+      // simply the distance from that anchor to the touch point.
+      const rect = target.getBoundingClientRect();
+      const offsetX = clientX - rect.left;
+      const offsetY = clientY - rect.top;
+      dragOffsetRef.current = { x: offsetX, y: offsetY };
+      dragStartRef.current = { x: clientX, y: clientY, id, isFromGrid, target };
+      isDraggingRef.current = true;
+      setDraggedPiece({ id, offset: { x: offsetX, y: offsetY } });
+    } else {
+      // Stash pieces: the slot wrapper is larger than the shape and centres the
+      // piece inside it.  We need the offset relative to the piece's (0,0) cell,
+      // NOT the slot wrapper, otherwise the piece jumps when it transitions from
+      // the centred stash layout to the placed-piece layout (which has no centering).
       const p = availablePieces.find((piece) => piece.id === id);
       if (!p) return;
+
+      // Compute centering offset the same way the stash renderer does.
+      const footprint = PIECE_MAX_FOOTPRINT[id] ?? { width: 1, height: 1 };
+      const shapeSize = getShapeSize(p.shape);
+      const centerOffsetX = Math.max(0, Math.floor((footprint.width * CELL_SIZE - shapeSize.width * CELL_SIZE) / 2));
+      const centerOffsetY = Math.max(0, Math.floor((footprint.height * CELL_SIZE - shapeSize.height * CELL_SIZE) / 2));
+
+      const rect = target.getBoundingClientRect();
+      // Offset from the piece's first cell, not the slot edge
+      const offsetX = clientX - rect.left - centerOffsetX;
+      const offsetY = clientY - rect.top - centerOffsetY;
+      dragOffsetRef.current = { x: offsetX, y: offsetY };
+      dragStartRef.current = { x: clientX, y: clientY, id, isFromGrid, target };
+      isDraggingRef.current = true;
+      setDraggedPiece({ id, offset: { x: offsetX, y: offsetY } });
+
       const containerRect = containerRef.current?.getBoundingClientRect();
       const initX = containerRect ? Math.round((clientX - containerRect.left - GRID_PADDING - offsetX) / CELL_SIZE) : 0;
       const initY = containerRect ? Math.round((clientY - containerRect.top - GRID_PADDING - offsetY) / CELL_SIZE) : 0;
@@ -3724,12 +3745,15 @@ export default function App() {
           {/* Stash — keep slots fixed so other pieces don't jump around on mobile */}
           {stashRenderOrder.length > 0 && (
             <div className="mt-4 md:mt-6 w-full">
-              {!isActive && !isGameOver && !isWin && (
-                <p className={cn(
-                  'text-center text-[10px] font-bold px-3 py-1 rounded-full animate-pulse mb-4 mx-auto w-fit',
-                  resolvedTheme === 'dark' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700',
-                )}>Click or drag to start!</p>
-              )}
+              {/* Fixed-height wrapper so the hint disappearing doesn't shift pieces */}
+              <div className="h-8 mb-2 flex items-center justify-center">
+                {!isActive && !isGameOver && !isWin && (
+                  <p className={cn(
+                    'text-center text-[10px] font-bold px-3 py-1 rounded-full animate-pulse',
+                    resolvedTheme === 'dark' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700',
+                  )}>Click or drag to start!</p>
+                )}
+              </div>
               <div className="md:hidden overflow-x-auto pb-2">
                 <div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-3 px-2 w-max min-w-full justify-center">
                   {stashRenderOrder.map((pieceId) => {
