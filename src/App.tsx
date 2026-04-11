@@ -2999,6 +2999,40 @@ export default function App() {
     return () => window.removeEventListener('mouseup', handlePointerUp);
   }, [handlePointerUp]);
 
+  // Prevent accidental page scroll while actively dragging on mobile.
+  useEffect(() => {
+    const preventTouchScroll = (event: TouchEvent) => {
+      if (screen !== 'game') return;
+      if (isDraggingRef.current || touchGestureRef.current !== null) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener('touchmove', preventTouchScroll, { passive: false });
+    return () => {
+      window.removeEventListener('touchmove', preventTouchScroll);
+    };
+  }, [screen]);
+
+  // Lock page scroll on game screen for better mobile playability.
+  useEffect(() => {
+    if (screen !== 'game') return;
+
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevOverscroll = document.documentElement.style.overscrollBehavior;
+
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    document.documentElement.style.overscrollBehavior = 'none';
+
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.documentElement.style.overscrollBehavior = prevOverscroll;
+    };
+  }, [screen]);
+
   useEffect(() => {
     return () => {
       clearTouchGesture();
@@ -3382,7 +3416,7 @@ export default function App() {
   return (
     <div
       className={cn(
-        'min-h-screen font-sans p-4 md:p-8 flex flex-col items-center select-none',
+        'min-h-screen font-sans p-4 md:p-8 flex flex-col items-center select-none touch-none overscroll-none',
         resolvedTheme === 'dark' ? 'bg-[#0b0f17] text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]',
       )}
       onMouseMove={onMouseMove}
