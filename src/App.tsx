@@ -34,6 +34,8 @@ const GRID_PADDING = 32; // p-8
 const CONSENT_KEY = 'pentablocks-consent-v1';
 const SESSION_COUNT_KEY = 'pentablocks-session-count';
 const AD_BREAK_INTERVAL = 3;
+const TOUCH_DRAG_THRESHOLD_PX = 8;
+const TOUCH_LONG_PRESS_MS = 420;
 const LOCAL_COMPLETED_KEY = 'katamino-completed';
 const LOCAL_BEST_TIMES_KEY = 'katamino-best-times';
 const LOCAL_PLAYER_STATS_KEY = 'katamino-player-stats';
@@ -60,6 +62,17 @@ interface ToastMessage {
   id: number;
   message: string;
   tone: ToastTone;
+}
+
+interface TouchGestureState {
+  id: string;
+  isFromGrid: boolean;
+  target: HTMLElement;
+  startX: number;
+  startY: number;
+  moved: boolean;
+  pointerDownStarted: boolean;
+  longPressTriggered: boolean;
 }
 
 interface PlacedPiece extends Piece {
@@ -212,6 +225,16 @@ const TIERS = [
 
 function getTier(levelId: number) {
   return TIERS[Math.min(Math.floor((levelId - 1) / 10), TIERS.length - 1)];
+}
+
+function getLevelStarRating(levelId: number, remainingSeconds?: number): 0 | 1 | 2 | 3 {
+  if (remainingSeconds === undefined) return 0;
+  const cfg = LEVEL_CONFIGS[levelId - 1];
+  if (!cfg || cfg.timeSeconds <= 0) return 1;
+  const ratio = Math.max(0, Math.min(1, remainingSeconds / cfg.timeSeconds));
+  if (ratio >= 0.66) return 3;
+  if (ratio >= 0.33) return 2;
+  return 1;
 }
 
 /** Build inline style for a single block cell with a 2.5D beveled look */
@@ -686,6 +709,7 @@ function LevelSelectScreen({
               const isCompleted = completedLevels.has(cfg.id);
               const isUnlocked = cfg.id === 1 || completedLevels.has(cfg.id - 1) || isCompleted;
               const subIndex = ((cfg.id - 1) % 10) + 1;
+              const starRating = getLevelStarRating(cfg.id, bestTimes[cfg.id]);
               return (
                 <button
                   key={cfg.id}
@@ -702,7 +726,18 @@ function LevelSelectScreen({
                     <span className={cn('text-[10px] font-black', isUnlocked ? (dark ? tier.darkText : tier.text) : 'text-gray-400')}>
                       LV {cfg.id}
                     </span>
-                    {isCompleted && <Star size={12} className={dark ? tier.darkText : tier.text} fill="currentColor" />}
+                    {isCompleted && (
+                      <div className="flex items-center gap-0.5" aria-label={`${starRating} star rating`}>
+                        {[1, 2, 3].map((star) => (
+                          <Star
+                            key={`${cfg.id}-star-${star}`}
+                            size={11}
+                            className={star <= starRating ? (dark ? tier.darkText : tier.text) : 'text-gray-300'}
+                            fill={star <= starRating ? 'currentColor' : 'none'}
+                          />
+                        ))}
+                      </div>
+                    )}
                     {!isUnlocked && <Lock size={12} className="text-gray-400" />}
                   </div>
                   <p className="text-lg font-black leading-none mb-2">{subIndex}</p>
@@ -1813,6 +1848,8 @@ export default function App() {
   const lastCountdownSoundRef = useRef<number | null>(null);
   const lastLowTimeSoundRef = useRef<number | null>(null);
   const lastRoundEndSoundKeyRef = useRef<string | null>(null);
+  const touchGestureRef = useRef<TouchGestureState | null>(null);
+  const touchLongPressTimerRef = useRef<number | null>(null);
 
   const config = LEVEL_CONFIGS[level - 1];
   const gridWidth = config.width;
@@ -2948,11 +2985,25 @@ export default function App() {
     isDraggingRef.current = false;
   }, []);
 
+  const clearTouchGesture = useCallback(() => {
+    if (touchLongPressTimerRef.current !== null) {
+      window.clearTimeout(touchLongPressTimerRef.current);
+      touchLongPressTimerRef.current = null;
+    }
+    touchGestureRef.current = null;
+  }, []);
+
   // Release drag if mouse leaves window
   useEffect(() => {
     window.addEventListener('mouseup', handlePointerUp);
     return () => window.removeEventListener('mouseup', handlePointerUp);
   }, [handlePointerUp]);
+
+  useEffect(() => {
+    return () => {
+      clearTouchGesture();
+    };
+  }, [clearTouchGesture]);
 
   const onMouseDown = (e: React.MouseEvent, id: string, isFromGrid: boolean) => {
     e.preventDefault(); // Prevent native drag (🚫 cursor)
@@ -2964,14 +3015,84 @@ export default function App() {
   const onTouchStart = (e: React.TouchEvent, id: string, isFromGrid: boolean) => {
     e.preventDefault();
     const touch = e.touches[0];
-    handlePointerDown(touch.clientX, touch.clientY, id, isFromGrid, e.currentTarget as HTMLElement);
+    const target = e.currentTarget as HTMLElement;
+    const isSelectedPiece = selectedPieceId === id;
+
+    // Mobile UX shortcut on selected piece:
+    // tap => rotate, long press => flip, move => drag
+    if (isSelectedPiece && !isGameOver && !isWin) {
+      if (isMultiplayerLocked) {
+        showToast('Match will start together after countdown.', 'neutral');
+        return;
+      }
+      clearTouchGesture();
+      touchGestureRef.current = {
+        id,
+        isFromGrid,
+        target,
+        startX: touch.clientX,
+        startY: touch.clientY,
+        moved: false,
+        pointerDownStarted: false,
+        longPressTriggered: false,
+      };
+      touchLongPressTimerRef.current = window.setTimeout(() => {
+        const gesture = touchGestureRef.current;
+        if (!gesture || gesture.id !== id || gesture.moved || gesture.pointerDownStarted) return;
+        gesture.longPressTriggered = true;
+        handleFlip(id);
+      }, TOUCH_LONG_PRESS_MS);
+      return;
+    }
+
+    handlePointerDown(touch.clientX, touch.clientY, id, isFromGrid, target);
   };
   const onTouchMove = (e: React.TouchEvent) => {
     e.preventDefault();
     const touch = e.touches[0];
-    handlePointerMove(touch.clientX, touch.clientY);
+    const gesture = touchGestureRef.current;
+    if (!gesture) {
+      handlePointerMove(touch.clientX, touch.clientY);
+      return;
+    }
+
+    const distance = Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY);
+    if (!gesture.moved && distance >= TOUCH_DRAG_THRESHOLD_PX) {
+      gesture.moved = true;
+      if (touchLongPressTimerRef.current !== null) {
+        window.clearTimeout(touchLongPressTimerRef.current);
+        touchLongPressTimerRef.current = null;
+      }
+      if (!gesture.longPressTriggered && !gesture.pointerDownStarted) {
+        handlePointerDown(gesture.startX, gesture.startY, gesture.id, gesture.isFromGrid, gesture.target);
+        gesture.pointerDownStarted = true;
+      }
+    }
+
+    if (gesture.pointerDownStarted) {
+      handlePointerMove(touch.clientX, touch.clientY);
+    }
   };
-  const onTouchEnd = handlePointerUp;
+  const onTouchEnd = () => {
+    const gesture = touchGestureRef.current;
+    if (!gesture) {
+      handlePointerUp();
+      return;
+    }
+
+    if (touchLongPressTimerRef.current !== null) {
+      window.clearTimeout(touchLongPressTimerRef.current);
+      touchLongPressTimerRef.current = null;
+    }
+
+    if (gesture.pointerDownStarted) {
+      handlePointerUp();
+    } else if (!gesture.moved && !gesture.longPressTriggered) {
+      handleRotate(gesture.id);
+    }
+
+    touchGestureRef.current = null;
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -3268,6 +3389,7 @@ export default function App() {
       onMouseUp={onMouseUp}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchEnd}
     >
       <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
       {/* Header */}
@@ -3746,6 +3868,22 @@ export default function App() {
                     </>
                   ) : (
                     <>
+                      {(() => {
+                        const displayBest = Math.max(bestTimes[level] ?? 0, timeLeft);
+                        const starRating = getLevelStarRating(level, displayBest);
+                        return (
+                          <div className="flex items-center justify-center gap-1 mb-3" aria-label={`Level rating: ${starRating} stars`}>
+                            {[1, 2, 3].map((star) => (
+                              <Star
+                                key={`result-star-${star}`}
+                                size={18}
+                                className={star <= starRating ? 'text-yellow-500' : 'text-gray-300'}
+                                fill={star <= starRating ? 'currentColor' : 'none'}
+                              />
+                            ))}
+                          </div>
+                        );
+                      })()}
                       <h2 className="text-4xl font-bold mb-2">Victory!</h2>
                       <p className="text-gray-500 mb-1">Level {level} - {config.label}</p>
                       <p className="text-sm text-gray-400 mb-1">{formatTime(timeLeft)} remaining | Up next: LV.{level + 1} ({getTier(level + 1).name})</p>
