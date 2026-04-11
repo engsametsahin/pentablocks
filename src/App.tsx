@@ -34,6 +34,8 @@ const GRID_PADDING = 32; // p-8
 const CONSENT_KEY = 'pentablocks-consent-v1';
 const SESSION_COUNT_KEY = 'pentablocks-session-count';
 const AD_BREAK_INTERVAL = 3;
+const TOUCH_DRAG_THRESHOLD_PX = 6;
+const TOUCH_LONG_PRESS_MS = 420;
 const LOCAL_COMPLETED_KEY = 'katamino-completed';
 const LOCAL_BEST_TIMES_KEY = 'katamino-best-times';
 const LOCAL_PLAYER_STATS_KEY = 'katamino-player-stats';
@@ -60,6 +62,17 @@ interface ToastMessage {
   id: number;
   message: string;
   tone: ToastTone;
+}
+
+interface TouchGestureState {
+  id: string;
+  isFromGrid: boolean;
+  target: HTMLElement;
+  startX: number;
+  startY: number;
+  moved: boolean;
+  dragStarted: boolean;
+  longPressTriggered: boolean;
 }
 
 interface PlacedPiece extends Piece {
@@ -1871,6 +1884,8 @@ export default function App() {
   const lastLowTimeSoundRef = useRef<number | null>(null);
   const lastRoundEndSoundKeyRef = useRef<string | null>(null);
   const stashOrderRef = useRef<string[]>([]);
+  const touchGestureRef = useRef<TouchGestureState | null>(null);
+  const touchLongPressTimerRef = useRef<number | null>(null);
 
   const config = LEVEL_CONFIGS[level - 1];
   const gridWidth = config.width;
@@ -3025,6 +3040,13 @@ export default function App() {
     isDraggingRef.current = false;
   }, []);
 
+  const clearTouchLongPressTimer = useCallback(() => {
+    if (touchLongPressTimerRef.current !== null) {
+      window.clearTimeout(touchLongPressTimerRef.current);
+      touchLongPressTimerRef.current = null;
+    }
+  }, []);
+
   // Release drag if mouse leaves window
   useEffect(() => {
     window.addEventListener('mouseup', handlePointerUp);
@@ -3035,7 +3057,7 @@ export default function App() {
   useEffect(() => {
     const preventTouchScroll = (event: TouchEvent) => {
       if (screen !== 'game') return;
-      if (isDraggingRef.current) {
+      if (isDraggingRef.current || touchGestureRef.current !== null) {
         event.preventDefault();
       }
     };
@@ -3076,14 +3098,76 @@ export default function App() {
     e.preventDefault();
     const touch = e.touches[0];
     const target = e.currentTarget as HTMLElement;
-    handlePointerDown(touch.clientX, touch.clientY, id, isFromGrid, target);
+    clearTouchLongPressTimer();
+
+    const gesture: TouchGestureState = {
+      id,
+      isFromGrid,
+      target,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      moved: false,
+      dragStarted: isFromGrid,
+      longPressTriggered: false,
+    };
+    touchGestureRef.current = gesture;
+
+    // For already-placed pieces: start drag immediately and allow tap/hold shortcuts.
+    if (isFromGrid) {
+      handlePointerDown(touch.clientX, touch.clientY, id, true, target);
+      touchLongPressTimerRef.current = window.setTimeout(() => {
+        const active = touchGestureRef.current;
+        if (!active || active.id !== id || active.moved || !active.isFromGrid) return;
+        active.longPressTriggered = true;
+        handleFlip(id);
+      }, TOUCH_LONG_PRESS_MS);
+    }
   };
   const onTouchMove = (e: React.TouchEvent) => {
     e.preventDefault();
     const touch = e.touches[0];
-    handlePointerMove(touch.clientX, touch.clientY);
+    const gesture = touchGestureRef.current;
+    if (!gesture) {
+      handlePointerMove(touch.clientX, touch.clientY);
+      return;
+    }
+
+    const distance = Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY);
+    if (!gesture.moved && distance >= TOUCH_DRAG_THRESHOLD_PX) {
+      gesture.moved = true;
+      clearTouchLongPressTimer();
+    }
+
+    // For stash pieces: start drag on first move (same touch gesture, no second tap needed).
+    if (!gesture.dragStarted && gesture.moved) {
+      handlePointerDown(gesture.startX, gesture.startY, gesture.id, gesture.isFromGrid, gesture.target);
+      gesture.dragStarted = true;
+    }
+
+    if (gesture.dragStarted) {
+      handlePointerMove(touch.clientX, touch.clientY);
+    }
   };
-  const onTouchEnd = handlePointerUp;
+  const onTouchEnd = () => {
+    const gesture = touchGestureRef.current;
+    clearTouchLongPressTimer();
+
+    if (!gesture) {
+      handlePointerUp();
+      return;
+    }
+
+    if (gesture.dragStarted) {
+      handlePointerUp();
+    }
+
+    // Mobile shortcuts only for pieces already on board.
+    if (gesture.isFromGrid && !gesture.moved && !gesture.longPressTriggered && !isGameOver && !isWin) {
+      handleRotate(gesture.id);
+    }
+
+    touchGestureRef.current = null;
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
