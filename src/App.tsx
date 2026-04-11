@@ -3427,7 +3427,7 @@ export default function App() {
     >
       <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
       {/* Header */}
-      <div className="w-full max-w-4xl flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+      <div className="w-full max-w-4xl flex flex-col md:flex-row justify-between items-center mb-4 md:mb-8 gap-4">
         <div className="flex items-center gap-4">
           <button
             onClick={goToLevelSelect}
@@ -3437,7 +3437,7 @@ export default function App() {
             <ChevronLeft size={20} />
           </button>
           <div>
-            <h1 className="text-4xl font-bold tracking-tight mb-1">PENTABLOCKS</h1>
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-1">PENTABLOCKS</h1>
             <div className="flex items-center gap-2 mt-1">
               <span className={cn('text-white text-[10px] font-bold px-2 py-0.5 rounded-full', tier.dot)}>
                 LV.{level} {config.label.toUpperCase()}
@@ -3506,10 +3506,10 @@ export default function App() {
       </div>
 
       {/* Main Game Area */}
-      <div className="relative w-full max-w-5xl flex flex-col lg:flex-row gap-8 items-start justify-center">
+      <div className="relative w-full max-w-5xl flex flex-col lg:flex-row gap-4 md:gap-8 items-start justify-center">
 
         {/* Left: Controls */}
-        <div className="w-full lg:w-48 flex flex-col gap-4">
+        <div className="order-2 lg:order-1 w-full lg:w-48 flex flex-col gap-4">
           <div className={cn('p-6 rounded-3xl shadow-sm border flex flex-col gap-4', resolvedTheme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-white border-black/5')}>
             <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400">Piece Controls</h3>
             <div className="grid grid-cols-2 gap-2">
@@ -3545,7 +3545,7 @@ export default function App() {
             </button>
           </div>
 
-          <div className={cn('text-white p-6 rounded-3xl shadow-xl', resolvedTheme === 'dark' ? 'bg-white/5 border border-white/10' : 'bg-gray-900')}>
+          <div className={cn('hidden lg:block text-white p-6 rounded-3xl shadow-xl', resolvedTheme === 'dark' ? 'bg-white/5 border border-white/10' : 'bg-gray-900')}>
             <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">How to Play</h3>
             <ul className="text-xs space-y-2 text-gray-300">
               <li className="flex gap-2"><span className="text-emerald-400 font-bold">01</span> Drag pieces to the grid</li>
@@ -3556,7 +3556,7 @@ export default function App() {
         </div>
 
         {/* Center: Board + Stash unified area */}
-        <div className="flex-1 flex flex-col items-center">
+        <div className="order-1 lg:order-2 flex-1 w-full flex flex-col items-center">
           {/* Board */}
           <div
             ref={containerRef}
