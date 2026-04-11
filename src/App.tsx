@@ -34,7 +34,8 @@ const GRID_PADDING = 32; // p-8
 const CONSENT_KEY = 'pentablocks-consent-v1';
 const SESSION_COUNT_KEY = 'pentablocks-session-count';
 const AD_BREAK_INTERVAL = 3;
-const TOUCH_DRAG_THRESHOLD_PX = 6;
+const TOUCH_DRAG_THRESHOLD_PX = 3;
+const TOUCH_LONG_PRESS_MS = 420;
 const LOCAL_COMPLETED_KEY = 'katamino-completed';
 const LOCAL_BEST_TIMES_KEY = 'katamino-best-times';
 const LOCAL_PLAYER_STATS_KEY = 'katamino-player-stats';
@@ -64,12 +65,17 @@ interface ToastMessage {
 }
 
 /** Minimal touch tracking — tap vs drag detection only. */
-interface TouchTrack {
+interface PointerTrack {
+  pointerId: number;
   id: string;
   isFromGrid: boolean;
   startX: number;
   startY: number;
+  lastX: number;
+  lastY: number;
   moved: boolean;
+  longPressTriggered: boolean;
+  longPressTimer: number | null;
 }
 
 interface PlacedPiece extends Piece {
@@ -1870,8 +1876,16 @@ export default function App() {
   const [isScoreboardOpen, setIsScoreboardOpen] = useState(false);
   const [nowTs, setNowTs] = useState(() => Date.now());
 
+  const gameSurfaceRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const dragStartRef = useRef<{ x: number; y: number; id: string; isFromGrid: boolean; target: HTMLElement } | null>(null);
+  const dragStartRef = useRef<{
+    x: number;
+    y: number;
+    id: string;
+    isFromGrid: boolean;
+    target: HTMLElement;
+    pointerId: number;
+  } | null>(null);
   const isDraggingRef = useRef(false);
   const dragOffsetRef = useRef<Point>({ x: 0, y: 0 });
   const levelStartRef = useRef<number>(Date.now());
@@ -1881,7 +1895,8 @@ export default function App() {
   const lastLowTimeSoundRef = useRef<number | null>(null);
   const lastRoundEndSoundKeyRef = useRef<string | null>(null);
   const stashOrderRef = useRef<string[]>([]);
-  const touchTrackRef = useRef<TouchTrack | null>(null);
+  const pointerTrackRef = useRef<PointerTrack | null>(null);
+  const touchTrackRef = pointerTrackRef;
 
   const config = LEVEL_CONFIGS[level - 1];
   const gridWidth = config.width;
@@ -3000,7 +3015,34 @@ export default function App() {
     return { x: Math.round(x / CELL_SIZE), y: Math.round(y / CELL_SIZE) };
   };
 
-  const handlePointerDown = (clientX: number, clientY: number, id: string, isFromGrid: boolean, target: HTMLElement) => {
+  const releaseCapturedPointer = useCallback((pointerId: number | null) => {
+    const surface = gameSurfaceRef.current;
+    if (!surface || pointerId === null) return;
+    try {
+      if (surface.hasPointerCapture(pointerId)) {
+        surface.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // Pointer may already be released.
+    }
+  }, []);
+
+  const clearPointerTrack = useCallback(() => {
+    const track = pointerTrackRef.current;
+    if (track?.longPressTimer) {
+      window.clearTimeout(track.longPressTimer);
+    }
+    pointerTrackRef.current = null;
+  }, []);
+
+  const handlePointerDown = (
+    clientX: number,
+    clientY: number,
+    id: string,
+    isFromGrid: boolean,
+    target: HTMLElement,
+    pointerId: number,
+  ) => {
     if (isGameOver || isWin) return;
     if (isMultiplayerLocked) {
       showToast('Match will start together after countdown.', 'neutral');
@@ -3016,7 +3058,7 @@ export default function App() {
       const offsetX = clientX - rect.left;
       const offsetY = clientY - rect.top;
       dragOffsetRef.current = { x: offsetX, y: offsetY };
-      dragStartRef.current = { x: clientX, y: clientY, id, isFromGrid, target };
+      dragStartRef.current = { x: clientX, y: clientY, id, isFromGrid, target, pointerId };
       isDraggingRef.current = true;
       setDraggedPiece({ id, offset: { x: offsetX, y: offsetY } });
     } else {
@@ -3038,7 +3080,7 @@ export default function App() {
       const offsetX = clientX - rect.left - centerOffsetX;
       const offsetY = clientY - rect.top - centerOffsetY;
       dragOffsetRef.current = { x: offsetX, y: offsetY };
-      dragStartRef.current = { x: clientX, y: clientY, id, isFromGrid, target };
+      dragStartRef.current = { x: clientX, y: clientY, id, isFromGrid, target, pointerId };
       isDraggingRef.current = true;
       setDraggedPiece({ id, offset: { x: offsetX, y: offsetY } });
 
@@ -3056,8 +3098,9 @@ export default function App() {
     }
   };
 
-  const handlePointerMove = (clientX: number, clientY: number) => {
+  const handlePointerMove = (clientX: number, clientY: number, pointerId: number) => {
     if (!isDraggingRef.current || !containerRef.current || !dragStartRef.current) return;
+    if (dragStartRef.current.pointerId !== pointerId) return;
     const { x: gridX, y: gridY } = screenToGrid(clientX, clientY);
     const dragId = dragStartRef.current.id;
     setPlacedPieces((prev) =>
@@ -3065,13 +3108,15 @@ export default function App() {
     );
   };
 
-  const handlePointerUp = useCallback(() => {
+  const handlePointerUp = useCallback((pointerId?: number | null) => {
     if (isDraggingRef.current) {
       setDraggedPiece(null);
     }
+    releaseCapturedPointer(pointerId ?? dragStartRef.current?.pointerId ?? null);
     dragStartRef.current = null;
     isDraggingRef.current = false;
-  }, []);
+    clearPointerTrack();
+  }, [clearPointerTrack, releaseCapturedPointer]);
 
   // ── Global event listeners ────────────────────────────────────────────────
   // Touch events are dispatched to the ORIGINAL target element, not whatever
@@ -3083,7 +3128,9 @@ export default function App() {
   // container — all touch tracking goes through the single window path below
   // to avoid dual-handler race conditions.
   useEffect(() => {
-    const onWindowTouchMove = (event: TouchEvent) => {
+    const shouldUseLegacyTouchFallback = typeof PointerEvent === 'undefined';
+    if (!shouldUseLegacyTouchFallback) return;
+    const onWindowTouchMoveLegacy = (event: TouchEvent) => {
       if (screen !== 'game') return;
       // Prevent scroll while any touch interaction is active
       if (isDraggingRef.current || touchTrackRef.current) {
@@ -3100,7 +3147,7 @@ export default function App() {
           track.moved = true;
         }
       }
-      handlePointerMove(touch.clientX, touch.clientY);
+      handlePointerMove(touch.clientX, touch.clientY, dragStartRef.current?.pointerId ?? -1);
     };
 
     const onWindowTouchEnd = () => {
@@ -3112,16 +3159,16 @@ export default function App() {
       if (track && track.isFromGrid && !track.moved && !isGameOver && !isWin) {
         handleRotate(track.id);
       }
-      handlePointerUp();
+      handlePointerUp(dragStartRef.current?.pointerId ?? null);
     };
 
     window.addEventListener('mouseup', handlePointerUp);
-    window.addEventListener('touchmove', onWindowTouchMove, { passive: false });
+    window.addEventListener('touchmove', onWindowTouchMoveLegacy, { passive: false });
     window.addEventListener('touchend', onWindowTouchEnd);
     window.addEventListener('touchcancel', onWindowTouchEnd);
     return () => {
       window.removeEventListener('mouseup', handlePointerUp);
-      window.removeEventListener('touchmove', onWindowTouchMove);
+      window.removeEventListener('touchmove', onWindowTouchMoveLegacy);
       window.removeEventListener('touchend', onWindowTouchEnd);
       window.removeEventListener('touchcancel', onWindowTouchEnd);
     };
@@ -3152,9 +3199,9 @@ export default function App() {
 
   const onMouseDown = (e: React.MouseEvent, id: string, isFromGrid: boolean) => {
     e.preventDefault(); // Prevent native drag (🚫 cursor)
-    handlePointerDown(e.clientX, e.clientY, id, isFromGrid, e.currentTarget as HTMLElement);
+    handlePointerDown(e.clientX, e.clientY, id, isFromGrid, e.currentTarget as HTMLElement, 0);
   };
-  const onMouseMove = (e: React.MouseEvent) => handlePointerMove(e.clientX, e.clientY);
+  const onMouseMove = (e: React.MouseEvent) => handlePointerMove(e.clientX, e.clientY, dragStartRef.current?.pointerId ?? 0);
   const onMouseUp = handlePointerUp;
 
   const onTouchStart = (e: React.TouchEvent, id: string, isFromGrid: boolean) => {
@@ -3172,16 +3219,101 @@ export default function App() {
 
     // Start the new drag immediately — the piece follows the finger from
     // the very first touchmove, with no threshold delay.
-    handlePointerDown(touch.clientX, touch.clientY, id, isFromGrid, target);
+    handlePointerDown(touch.clientX, touch.clientY, id, isFromGrid, target, 0);
 
     // Record touch start position so we can distinguish tap vs drag later.
     touchTrackRef.current = {
+      pointerId: 0,
       id,
       isFromGrid,
       startX: touch.clientX,
       startY: touch.clientY,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
       moved: false,
+      longPressTriggered: false,
+      longPressTimer: null,
     };
+  };
+
+  const onPiecePointerDown = (e: React.PointerEvent<HTMLElement>, id: string, isFromGrid: boolean) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+
+    if (dragStartRef.current && dragStartRef.current.pointerId !== e.pointerId) {
+      handlePointerUp(dragStartRef.current.pointerId);
+    }
+
+    const surface = gameSurfaceRef.current;
+    if (surface) {
+      try {
+        surface.setPointerCapture(e.pointerId);
+      } catch {
+        // Continue without capture if the browser rejects it.
+      }
+    }
+
+    handlePointerDown(e.clientX, e.clientY, id, isFromGrid, e.currentTarget, e.pointerId);
+
+    const track: PointerTrack = {
+      pointerId: e.pointerId,
+      id,
+      isFromGrid,
+      startX: e.clientX,
+      startY: e.clientY,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      moved: false,
+      longPressTriggered: false,
+      longPressTimer: null,
+    };
+
+    if (e.pointerType !== 'mouse' && isFromGrid) {
+      track.longPressTimer = window.setTimeout(() => {
+        const current = pointerTrackRef.current;
+        if (!current || current.pointerId !== e.pointerId || current.moved || current.longPressTriggered) return;
+        current.longPressTriggered = true;
+        handleFlip(id);
+      }, TOUCH_LONG_PRESS_MS);
+    }
+
+    pointerTrackRef.current = track;
+  };
+
+  const onSurfacePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const track = pointerTrackRef.current;
+    if (!track || track.pointerId !== e.pointerId) return;
+
+    const distance = Math.hypot(e.clientX - track.startX, e.clientY - track.startY);
+    if (!track.moved && distance >= TOUCH_DRAG_THRESHOLD_PX) {
+      track.moved = true;
+      if (track.longPressTimer) {
+        window.clearTimeout(track.longPressTimer);
+        track.longPressTimer = null;
+      }
+    }
+
+    track.lastX = e.clientX;
+    track.lastY = e.clientY;
+    handlePointerMove(e.clientX, e.clientY, e.pointerId);
+  };
+
+  const onSurfacePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const track = pointerTrackRef.current;
+    if (track && track.pointerId === e.pointerId) {
+      if (track.longPressTimer) {
+        window.clearTimeout(track.longPressTimer);
+      }
+      if (!track.moved && !track.longPressTriggered && track.isFromGrid && !isGameOver && !isWin) {
+        handleRotate(track.id);
+      }
+    }
+
+    handlePointerUp(e.pointerId);
+  };
+
+  const onSurfacePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    handlePointerUp(e.pointerId);
   };
 
   const formatTime = (seconds: number) => {
@@ -3474,12 +3606,14 @@ export default function App() {
 
   return (
     <div
+      ref={gameSurfaceRef}
       className={cn(
         'min-h-screen font-sans p-4 md:p-8 flex flex-col items-center select-none touch-none overscroll-none',
         resolvedTheme === 'dark' ? 'bg-[#0b0f17] text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]',
       )}
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
+      onPointerMove={onSurfacePointerMove}
+      onPointerUp={onSurfacePointerUp}
+      onPointerCancel={onSurfacePointerCancel}
     >
       <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
       {/* Header */}
@@ -3659,8 +3793,7 @@ export default function App() {
                   !isWin && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                 )}
                 style={{ left: piece.position.x * CELL_SIZE + GRID_PADDING, top: piece.position.y * CELL_SIZE + GRID_PADDING, width: 0, height: 0 }}
-                onMouseDown={(e) => onMouseDown(e, piece.id, true)}
-                onTouchStart={(e) => onTouchStart(e, piece.id, true)}
+                onPointerDown={(e) => onPiecePointerDown(e, piece.id, true)}
               >
                 {piece.currentShape.map((cell, i) => (
                   <div
@@ -3710,7 +3843,7 @@ export default function App() {
                           piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                         )}
                         style={{ width: slotWidth, height: slotHeight }}
-                        onTouchStart={piece ? (e) => onTouchStart(e, piece.id, false) : undefined}
+                        onPointerDown={piece ? (e) => onPiecePointerDown(e, piece.id, false) : undefined}
                       >
                         {piece ? piece.shape.map((cell, i) => (
                           <div
@@ -3755,8 +3888,7 @@ export default function App() {
                         piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                       )}
                       style={{ width: slotWidth, height: slotHeight }}
-                      onMouseDown={piece ? (e) => onMouseDown(e, piece.id, false) : undefined}
-                      onTouchStart={piece ? (e) => onTouchStart(e, piece.id, false) : undefined}
+                      onPointerDown={piece ? (e) => onPiecePointerDown(e, piece.id, false) : undefined}
                     >
                       {piece ? piece.shape.map((cell, i) => (
                         <div
