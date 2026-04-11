@@ -34,8 +34,6 @@ const GRID_PADDING = 32; // p-8
 const CONSENT_KEY = 'pentablocks-consent-v1';
 const SESSION_COUNT_KEY = 'pentablocks-session-count';
 const AD_BREAK_INTERVAL = 3;
-const TOUCH_DRAG_THRESHOLD_PX = 8;
-const TOUCH_LONG_PRESS_MS = 420;
 const LOCAL_COMPLETED_KEY = 'katamino-completed';
 const LOCAL_BEST_TIMES_KEY = 'katamino-best-times';
 const LOCAL_PLAYER_STATS_KEY = 'katamino-player-stats';
@@ -62,17 +60,6 @@ interface ToastMessage {
   id: number;
   message: string;
   tone: ToastTone;
-}
-
-interface TouchGestureState {
-  id: string;
-  isFromGrid: boolean;
-  target: HTMLElement;
-  startX: number;
-  startY: number;
-  moved: boolean;
-  pointerDownStarted: boolean;
-  longPressTriggered: boolean;
 }
 
 interface PlacedPiece extends Piece {
@@ -236,6 +223,41 @@ function getLevelStarRating(levelId: number, remainingSeconds?: number): 0 | 1 |
   if (ratio >= 0.33) return 2;
   return 1;
 }
+
+function getShapeSize(shape: Point[]) {
+  const width = Math.max(...shape.map((p) => p.x)) + 1;
+  const height = Math.max(...shape.map((p) => p.y)) + 1;
+  return { width, height };
+}
+
+function getMaxFootprint(shape: Point[]) {
+  const variants: Point[][] = [];
+  let rotated = shape;
+  variants.push(rotated);
+  for (let i = 0; i < 3; i += 1) {
+    rotated = rotateShape(rotated);
+    variants.push(rotated);
+  }
+  let flipped = flipShape(shape);
+  variants.push(flipped);
+  for (let i = 0; i < 3; i += 1) {
+    flipped = rotateShape(flipped);
+    variants.push(flipped);
+  }
+
+  let maxWidth = 0;
+  let maxHeight = 0;
+  for (const variant of variants) {
+    const size = getShapeSize(variant);
+    if (size.width > maxWidth) maxWidth = size.width;
+    if (size.height > maxHeight) maxHeight = size.height;
+  }
+  return { width: maxWidth, height: maxHeight };
+}
+
+const PIECE_MAX_FOOTPRINT: Record<string, { width: number; height: number }> = Object.fromEntries(
+  ALL_PIECES.map((piece) => [piece.id, getMaxFootprint(piece.shape)]),
+);
 
 /** Build inline style for a single block cell with a 2.5D beveled look */
 function blockCellStyle(color: string, size: number, left: number, top: number, opacity = 1): React.CSSProperties {
@@ -1848,8 +1870,7 @@ export default function App() {
   const lastCountdownSoundRef = useRef<number | null>(null);
   const lastLowTimeSoundRef = useRef<number | null>(null);
   const lastRoundEndSoundKeyRef = useRef<string | null>(null);
-  const touchGestureRef = useRef<TouchGestureState | null>(null);
-  const touchLongPressTimerRef = useRef<number | null>(null);
+  const stashOrderRef = useRef<string[]>([]);
 
   const config = LEVEL_CONFIGS[level - 1];
   const gridWidth = config.width;
@@ -1864,6 +1885,25 @@ export default function App() {
   const resolvedTheme: 'dark' | 'light' = themeMode === 'auto'
     ? (systemPrefersDark ? 'dark' : 'light')
     : themeMode;
+  const stashSlotOrder = stashOrderRef.current;
+
+  useEffect(() => {
+    const currentIds = Array.from(new Set([
+      ...availablePieces.map((piece) => piece.id),
+      ...placedPieces.map((piece) => piece.id),
+    ]));
+
+    if (placedPieces.length === 0 && availablePieces.length === totalPiecesCount) {
+      stashOrderRef.current = availablePieces.map((piece) => piece.id);
+      return;
+    }
+
+    const nextOrder = stashOrderRef.current.filter((id) => currentIds.includes(id));
+    for (const id of currentIds) {
+      if (!nextOrder.includes(id)) nextOrder.push(id);
+    }
+    stashOrderRef.current = nextOrder;
+  }, [availablePieces, placedPieces, totalPiecesCount, level]);
 
   // Count only pieces fully inside the grid with no overlap
   const seatedPiecesCount = (() => {
@@ -2985,14 +3025,6 @@ export default function App() {
     isDraggingRef.current = false;
   }, []);
 
-  const clearTouchGesture = useCallback(() => {
-    if (touchLongPressTimerRef.current !== null) {
-      window.clearTimeout(touchLongPressTimerRef.current);
-      touchLongPressTimerRef.current = null;
-    }
-    touchGestureRef.current = null;
-  }, []);
-
   // Release drag if mouse leaves window
   useEffect(() => {
     window.addEventListener('mouseup', handlePointerUp);
@@ -3003,7 +3035,7 @@ export default function App() {
   useEffect(() => {
     const preventTouchScroll = (event: TouchEvent) => {
       if (screen !== 'game') return;
-      if (isDraggingRef.current || touchGestureRef.current !== null) {
+      if (isDraggingRef.current) {
         event.preventDefault();
       }
     };
@@ -3033,12 +3065,6 @@ export default function App() {
     };
   }, [screen]);
 
-  useEffect(() => {
-    return () => {
-      clearTouchGesture();
-    };
-  }, [clearTouchGesture]);
-
   const onMouseDown = (e: React.MouseEvent, id: string, isFromGrid: boolean) => {
     e.preventDefault(); // Prevent native drag (🚫 cursor)
     handlePointerDown(e.clientX, e.clientY, id, isFromGrid, e.currentTarget as HTMLElement);
@@ -3050,83 +3076,14 @@ export default function App() {
     e.preventDefault();
     const touch = e.touches[0];
     const target = e.currentTarget as HTMLElement;
-    const isSelectedPiece = selectedPieceId === id;
-
-    // Mobile UX shortcut on selected piece:
-    // tap => rotate, long press => flip, move => drag
-    if (isSelectedPiece && !isGameOver && !isWin) {
-      if (isMultiplayerLocked) {
-        showToast('Match will start together after countdown.', 'neutral');
-        return;
-      }
-      clearTouchGesture();
-      touchGestureRef.current = {
-        id,
-        isFromGrid,
-        target,
-        startX: touch.clientX,
-        startY: touch.clientY,
-        moved: false,
-        pointerDownStarted: false,
-        longPressTriggered: false,
-      };
-      touchLongPressTimerRef.current = window.setTimeout(() => {
-        const gesture = touchGestureRef.current;
-        if (!gesture || gesture.id !== id || gesture.moved || gesture.pointerDownStarted) return;
-        gesture.longPressTriggered = true;
-        handleFlip(id);
-      }, TOUCH_LONG_PRESS_MS);
-      return;
-    }
-
     handlePointerDown(touch.clientX, touch.clientY, id, isFromGrid, target);
   };
   const onTouchMove = (e: React.TouchEvent) => {
     e.preventDefault();
     const touch = e.touches[0];
-    const gesture = touchGestureRef.current;
-    if (!gesture) {
-      handlePointerMove(touch.clientX, touch.clientY);
-      return;
-    }
-
-    const distance = Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY);
-    if (!gesture.moved && distance >= TOUCH_DRAG_THRESHOLD_PX) {
-      gesture.moved = true;
-      if (touchLongPressTimerRef.current !== null) {
-        window.clearTimeout(touchLongPressTimerRef.current);
-        touchLongPressTimerRef.current = null;
-      }
-      if (!gesture.longPressTriggered && !gesture.pointerDownStarted) {
-        handlePointerDown(gesture.startX, gesture.startY, gesture.id, gesture.isFromGrid, gesture.target);
-        gesture.pointerDownStarted = true;
-      }
-    }
-
-    if (gesture.pointerDownStarted) {
-      handlePointerMove(touch.clientX, touch.clientY);
-    }
+    handlePointerMove(touch.clientX, touch.clientY);
   };
-  const onTouchEnd = () => {
-    const gesture = touchGestureRef.current;
-    if (!gesture) {
-      handlePointerUp();
-      return;
-    }
-
-    if (touchLongPressTimerRef.current !== null) {
-      window.clearTimeout(touchLongPressTimerRef.current);
-      touchLongPressTimerRef.current = null;
-    }
-
-    if (gesture.pointerDownStarted) {
-      handlePointerUp();
-    } else if (!gesture.moved && !gesture.longPressTriggered) {
-      handleRotate(gesture.id);
-    }
-
-    touchGestureRef.current = null;
-  };
+  const onTouchEnd = handlePointerUp;
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -3412,6 +3369,9 @@ export default function App() {
   // ── Game screen ──
   const dragValid = isDragValid();
   const tier = getTier(level);
+  const availableById = new Map<string, Piece>(availablePieces.map((piece) => [piece.id, piece] as const));
+  const stashRenderOrder = (stashSlotOrder.length > 0 ? stashSlotOrder : availablePieces.map((piece) => piece.id))
+    .filter((id, index, arr) => arr.indexOf(id) === index);
 
   return (
     <div
@@ -3545,7 +3505,7 @@ export default function App() {
             </button>
           </div>
 
-          <div className={cn('hidden lg:block text-white p-6 rounded-3xl shadow-xl', resolvedTheme === 'dark' ? 'bg-white/5 border border-white/10' : 'bg-gray-900')}>
+          <div className={cn('text-white p-6 rounded-3xl shadow-xl', resolvedTheme === 'dark' ? 'bg-white/5 border border-white/10' : 'bg-gray-900')}>
             <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-3">How to Play</h3>
             <ul className="text-xs space-y-2 text-gray-300">
               <li className="flex gap-2"><span className="text-emerald-400 font-bold">01</span> Drag pieces to the grid</li>
@@ -3622,39 +3582,58 @@ export default function App() {
             ))}
           </div>
 
-          {/* Stash — pieces outside the board */}
-          {availablePieces.length > 0 && (
-            <div className="mt-6 w-full">
+          {/* Stash — keep slots fixed so other pieces don't jump around on mobile */}
+          {stashRenderOrder.length > 0 && (
+            <div className="mt-4 md:mt-6 w-full">
               {!isActive && !isGameOver && !isWin && (
                 <p className={cn(
                   'text-center text-[10px] font-bold px-3 py-1 rounded-full animate-pulse mb-4 mx-auto w-fit',
                   resolvedTheme === 'dark' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700',
                 )}>Click or drag to start!</p>
               )}
-              <div className="flex flex-wrap justify-center gap-6 px-4">
-                {availablePieces.map((piece) => (
+              <div className="flex flex-wrap justify-center gap-6 px-2 md:px-4">
+                {stashRenderOrder.map((pieceId) => {
+                  const piece = availableById.get(pieceId);
+                  const footprint = PIECE_MAX_FOOTPRINT[pieceId] ?? { width: 1, height: 1 };
+                  const slotWidth = footprint.width * CELL_SIZE;
+                  const slotHeight = footprint.height * CELL_SIZE;
+                  const shapeSize = piece ? getShapeSize(piece.shape) : { width: 1, height: 1 };
+                  const offsetX = piece ? Math.max(0, Math.floor((slotWidth - shapeSize.width * CELL_SIZE) / 2)) : 0;
+                  const offsetY = piece ? Math.max(0, Math.floor((slotHeight - shapeSize.height * CELL_SIZE) / 2)) : 0;
+                  return (
                   <div
-                    key={piece.id}
+                    key={pieceId}
                     className={cn(
-                      'relative cursor-grab hover:scale-105 transition-all touch-none rounded-lg',
-                      selectedPieceId === piece.id && 'ring-2 ring-offset-4 scale-105',
-                      selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
+                      'relative rounded-lg touch-none',
+                      piece ? 'cursor-grab transition-all md:hover:scale-105' : 'opacity-35',
+                      piece && selectedPieceId === piece.id && 'ring-2 ring-offset-2 md:ring-offset-4',
+                      piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                     )}
-                    style={{
-                      width: Math.max(...piece.shape.map((p) => p.x)) * CELL_SIZE + CELL_SIZE,
-                      height: Math.max(...piece.shape.map((p) => p.y)) * CELL_SIZE + CELL_SIZE,
-                    }}
-                    onMouseDown={(e) => onMouseDown(e, piece.id, false)}
-                    onTouchStart={(e) => onTouchStart(e, piece.id, false)}
+                    style={{ width: slotWidth, height: slotHeight }}
+                    onMouseDown={piece ? (e) => onMouseDown(e, piece.id, false) : undefined}
+                    onTouchStart={piece ? (e) => onTouchStart(e, piece.id, false) : undefined}
                   >
-                    {piece.shape.map((cell, i) => (
+                    {piece ? piece.shape.map((cell, i) => (
                       <div
-                        key={i}
-                        style={blockCellStyle(piece.color, CELL_SIZE, cell.x * CELL_SIZE, cell.y * CELL_SIZE)}
+                        key={`${piece.id}-${i}`}
+                        style={blockCellStyle(
+                          piece.color,
+                          CELL_SIZE,
+                          offsetX + cell.x * CELL_SIZE,
+                          offsetY + cell.y * CELL_SIZE,
+                        )}
                       />
-                    ))}
+                    )) : (
+                      <div
+                        className={cn(
+                          'absolute inset-0 rounded-lg border-2 border-dashed',
+                          resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/10',
+                        )}
+                      />
+                    )}
                   </div>
-                ))}
+                );
+                })}
               </div>
             </div>
           )}
