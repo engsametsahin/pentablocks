@@ -34,7 +34,7 @@ const GRID_PADDING = 32; // p-8
 const CONSENT_KEY = 'pentablocks-consent-v1';
 const SESSION_COUNT_KEY = 'pentablocks-session-count';
 const AD_BREAK_INTERVAL = 3;
-const TOUCH_DRAG_THRESHOLD_PX = 6;
+const TOUCH_DRAG_THRESHOLD_PX = 3;
 const TOUCH_LONG_PRESS_MS = 420;
 const LOCAL_COMPLETED_KEY = 'katamino-completed';
 const LOCAL_BEST_TIMES_KEY = 'katamino-best-times';
@@ -2925,6 +2925,14 @@ export default function App() {
       if (!prev.some(p => p.id === id)) return prev;
       return prev.map((p) => p.id === id ? { ...p, shape: rotateShape(p.shape) } : p);
     });
+    playSoundCue('piece_rotate');
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate(8);
+      } catch {
+        // Ignore unsupported / blocked vibration calls.
+      }
+    }
   }, []);
 
   const handleFlip = useCallback((id: string) => {
@@ -2936,6 +2944,14 @@ export default function App() {
       if (!prev.some(p => p.id === id)) return prev;
       return prev.map((p) => p.id === id ? { ...p, shape: flipShape(p.shape) } : p);
     });
+    playSoundCue('piece_flip');
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([10, 25, 10]);
+      } catch {
+        // Ignore unsupported / blocked vibration calls.
+      }
+    }
   }, []);
 
   const returnToStash = useCallback((id: string) => {
@@ -3087,6 +3103,13 @@ export default function App() {
     };
   }, [screen]);
 
+  useEffect(() => {
+    return () => {
+      clearTouchLongPressTimer();
+      touchGestureRef.current = null;
+    };
+  }, [clearTouchLongPressTimer]);
+
   const onMouseDown = (e: React.MouseEvent, id: string, isFromGrid: boolean) => {
     e.preventDefault(); // Prevent native drag (🚫 cursor)
     handlePointerDown(e.clientX, e.clientY, id, isFromGrid, e.currentTarget as HTMLElement);
@@ -3099,6 +3122,13 @@ export default function App() {
     const touch = e.touches[0];
     const target = e.currentTarget as HTMLElement;
     clearTouchLongPressTimer();
+    touchGestureRef.current = null;
+
+    if (isDraggingRef.current) {
+      handlePointerUp();
+    }
+
+    handlePointerDown(touch.clientX, touch.clientY, id, isFromGrid, target);
 
     const gesture: TouchGestureState = {
       id,
@@ -3107,14 +3137,13 @@ export default function App() {
       startX: touch.clientX,
       startY: touch.clientY,
       moved: false,
-      dragStarted: isFromGrid,
+      dragStarted: true,
       longPressTriggered: false,
     };
     touchGestureRef.current = gesture;
 
-    // For already-placed pieces: start drag immediately and allow tap/hold shortcuts.
+    // For already-placed pieces: keep tap/hold shortcuts while dragging starts immediately.
     if (isFromGrid) {
-      handlePointerDown(touch.clientX, touch.clientY, id, true, target);
       touchLongPressTimerRef.current = window.setTimeout(() => {
         const active = touchGestureRef.current;
         if (!active || active.id !== id || active.moved || !active.isFromGrid) return;
@@ -3136,12 +3165,6 @@ export default function App() {
     if (!gesture.moved && distance >= TOUCH_DRAG_THRESHOLD_PX) {
       gesture.moved = true;
       clearTouchLongPressTimer();
-    }
-
-    // For stash pieces: start drag on first move (same touch gesture, no second tap needed).
-    if (!gesture.dragStarted && gesture.moved) {
-      handlePointerDown(gesture.startX, gesture.startY, gesture.id, gesture.isFromGrid, gesture.target);
-      gesture.dragStarted = true;
     }
 
     if (gesture.dragStarted) {
@@ -3675,7 +3698,53 @@ export default function App() {
                   resolvedTheme === 'dark' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700',
                 )}>Click or drag to start!</p>
               )}
-              <div className="flex flex-wrap justify-center gap-6 px-2 md:px-4">
+              <div className="md:hidden overflow-x-auto pb-2">
+                <div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-3 px-2 w-max min-w-full justify-center">
+                  {stashRenderOrder.map((pieceId) => {
+                    const piece = availableById.get(pieceId);
+                    const footprint = PIECE_MAX_FOOTPRINT[pieceId] ?? { width: 1, height: 1 };
+                    const slotWidth = footprint.width * CELL_SIZE;
+                    const slotHeight = footprint.height * CELL_SIZE;
+                    const shapeSize = piece ? getShapeSize(piece.shape) : { width: 1, height: 1 };
+                    const offsetX = piece ? Math.max(0, Math.floor((slotWidth - shapeSize.width * CELL_SIZE) / 2)) : 0;
+                    const offsetY = piece ? Math.max(0, Math.floor((slotHeight - shapeSize.height * CELL_SIZE) / 2)) : 0;
+                    return (
+                      <div
+                        key={`m-${pieceId}`}
+                        className={cn(
+                          'relative rounded-lg touch-none',
+                          piece ? 'cursor-grab' : 'opacity-35',
+                          piece && selectedPieceId === piece.id && 'ring-2 ring-offset-2',
+                          piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
+                        )}
+                        style={{ width: slotWidth, height: slotHeight }}
+                        onTouchStart={piece ? (e) => onTouchStart(e, piece.id, false) : undefined}
+                      >
+                        {piece ? piece.shape.map((cell, i) => (
+                          <div
+                            key={`${piece.id}-m-${i}`}
+                            style={blockCellStyle(
+                              piece.color,
+                              CELL_SIZE,
+                              offsetX + cell.x * CELL_SIZE,
+                              offsetY + cell.y * CELL_SIZE,
+                            )}
+                          />
+                        )) : (
+                          <div
+                            className={cn(
+                              'absolute inset-0 rounded-lg border-2 border-dashed',
+                              resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/10',
+                            )}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="hidden md:flex flex-wrap justify-center gap-6 px-4">
                 {stashRenderOrder.map((pieceId) => {
                   const piece = availableById.get(pieceId);
                   const footprint = PIECE_MAX_FOOTPRINT[pieceId] ?? { width: 1, height: 1 };
@@ -3685,38 +3754,38 @@ export default function App() {
                   const offsetX = piece ? Math.max(0, Math.floor((slotWidth - shapeSize.width * CELL_SIZE) / 2)) : 0;
                   const offsetY = piece ? Math.max(0, Math.floor((slotHeight - shapeSize.height * CELL_SIZE) / 2)) : 0;
                   return (
-                  <div
-                    key={pieceId}
-                    className={cn(
-                      'relative rounded-lg touch-none',
-                      piece ? 'cursor-grab transition-all md:hover:scale-105' : 'opacity-35',
-                      piece && selectedPieceId === piece.id && 'ring-2 ring-offset-2 md:ring-offset-4',
-                      piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
-                    )}
-                    style={{ width: slotWidth, height: slotHeight }}
-                    onMouseDown={piece ? (e) => onMouseDown(e, piece.id, false) : undefined}
-                    onTouchStart={piece ? (e) => onTouchStart(e, piece.id, false) : undefined}
-                  >
-                    {piece ? piece.shape.map((cell, i) => (
-                      <div
-                        key={`${piece.id}-${i}`}
-                        style={blockCellStyle(
-                          piece.color,
-                          CELL_SIZE,
-                          offsetX + cell.x * CELL_SIZE,
-                          offsetY + cell.y * CELL_SIZE,
-                        )}
-                      />
-                    )) : (
-                      <div
-                        className={cn(
-                          'absolute inset-0 rounded-lg border-2 border-dashed',
-                          resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/10',
-                        )}
-                      />
-                    )}
-                  </div>
-                );
+                    <div
+                      key={`d-${pieceId}`}
+                      className={cn(
+                        'relative rounded-lg touch-none',
+                        piece ? 'cursor-grab transition-all hover:scale-105' : 'opacity-35',
+                        piece && selectedPieceId === piece.id && 'ring-2 ring-offset-4',
+                        piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
+                      )}
+                      style={{ width: slotWidth, height: slotHeight }}
+                      onMouseDown={piece ? (e) => onMouseDown(e, piece.id, false) : undefined}
+                      onTouchStart={piece ? (e) => onTouchStart(e, piece.id, false) : undefined}
+                    >
+                      {piece ? piece.shape.map((cell, i) => (
+                        <div
+                          key={`${piece.id}-d-${i}`}
+                          style={blockCellStyle(
+                            piece.color,
+                            CELL_SIZE,
+                            offsetX + cell.x * CELL_SIZE,
+                            offsetY + cell.y * CELL_SIZE,
+                          )}
+                        />
+                      )) : (
+                        <div
+                          className={cn(
+                            'absolute inset-0 rounded-lg border-2 border-dashed',
+                            resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/10',
+                          )}
+                        />
+                      )}
+                    </div>
+                  );
                 })}
               </div>
             </div>

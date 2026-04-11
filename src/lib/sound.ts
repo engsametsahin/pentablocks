@@ -1,4 +1,4 @@
-type SoundCue = 'player_joined' | 'countdown_tick' | 'time_low' | 'round_end';
+type SoundCue = 'player_joined' | 'countdown_tick' | 'time_low' | 'round_end' | 'piece_rotate' | 'piece_flip';
 
 let audioCtx: AudioContext | null = null;
 
@@ -68,8 +68,14 @@ export function playSoundCue(cue: SoundCue) {
       beep(ctx, 680, t0, 0.08, 'sine', 0.04);
       beep(ctx, 860, t0 + 0.1, 0.1, 'sine', 0.045);
       break;
+    case 'piece_rotate':
+      beep(ctx, 780, t0, 0.05, 'triangle', 0.03);
+      break;
+    case 'piece_flip':
+      beep(ctx, 620, t0, 0.05, 'triangle', 0.03);
+      beep(ctx, 700, t0 + 0.055, 0.05, 'triangle', 0.03);
+      break;
     default:
       break;
   }
 }
-
