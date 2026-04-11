@@ -34,8 +34,7 @@ const GRID_PADDING = 32; // p-8
 const CONSENT_KEY = 'pentablocks-consent-v1';
 const SESSION_COUNT_KEY = 'pentablocks-session-count';
 const AD_BREAK_INTERVAL = 3;
-const TOUCH_DRAG_THRESHOLD_PX = 3;
-const TOUCH_LONG_PRESS_MS = 420;
+const TOUCH_DRAG_THRESHOLD_PX = 6;
 const LOCAL_COMPLETED_KEY = 'katamino-completed';
 const LOCAL_BEST_TIMES_KEY = 'katamino-best-times';
 const LOCAL_PLAYER_STATS_KEY = 'katamino-player-stats';
@@ -64,15 +63,13 @@ interface ToastMessage {
   tone: ToastTone;
 }
 
-interface TouchGestureState {
+/** Minimal touch tracking — tap vs drag detection only. */
+interface TouchTrack {
   id: string;
   isFromGrid: boolean;
-  target: HTMLElement;
   startX: number;
   startY: number;
   moved: boolean;
-  dragStarted: boolean;
-  longPressTriggered: boolean;
 }
 
 interface PlacedPiece extends Piece {
@@ -1884,8 +1881,7 @@ export default function App() {
   const lastLowTimeSoundRef = useRef<number | null>(null);
   const lastRoundEndSoundKeyRef = useRef<string | null>(null);
   const stashOrderRef = useRef<string[]>([]);
-  const touchGestureRef = useRef<TouchGestureState | null>(null);
-  const touchLongPressTimerRef = useRef<number | null>(null);
+  const touchTrackRef = useRef<TouchTrack | null>(null);
 
   const config = LEVEL_CONFIGS[level - 1];
   const gridWidth = config.width;
@@ -3077,34 +3073,31 @@ export default function App() {
     isDraggingRef.current = false;
   }, []);
 
-  const clearTouchLongPressTimer = useCallback(() => {
-    if (touchLongPressTimerRef.current !== null) {
-      window.clearTimeout(touchLongPressTimerRef.current);
-      touchLongPressTimerRef.current = null;
-    }
-  }, []);
-
-  // Release drag if mouse/touch leaves window or target unmounts.
-  // Touch events stick to the original target — if that DOM node is removed
-  // (e.g. stash piece unmounts when moved to placedPieces), the React
-  // onTouchMove on the container never fires.  Window-level listeners catch
-  // these orphaned events so the drag keeps working.
+  // ── Global event listeners ────────────────────────────────────────────────
+  // Touch events are dispatched to the ORIGINAL target element, not whatever
+  // is under the finger.  When a stash piece is picked up it unmounts (moved
+  // to placedPieces), so React container handlers never see the subsequent
+  // touchmove/touchend.  Window-level listeners always work.
+  //
+  // We intentionally do NOT attach onTouchMove / onTouchEnd on the React
+  // container — all touch tracking goes through the single window path below
+  // to avoid dual-handler race conditions.
   useEffect(() => {
     const onWindowTouchMove = (event: TouchEvent) => {
       if (screen !== 'game') return;
-      if (isDraggingRef.current || touchGestureRef.current !== null) {
+      // Prevent scroll while any touch interaction is active
+      if (isDraggingRef.current || touchTrackRef.current) {
         event.preventDefault();
       }
       if (!isDraggingRef.current) return;
       const touch = event.touches[0];
       if (!touch) return;
 
-      const gesture = touchGestureRef.current;
-      if (gesture && !gesture.moved) {
-        const distance = Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY);
+      const track = touchTrackRef.current;
+      if (track && !track.moved) {
+        const distance = Math.hypot(touch.clientX - track.startX, touch.clientY - track.startY);
         if (distance >= TOUCH_DRAG_THRESHOLD_PX) {
-          gesture.moved = true;
-          clearTouchLongPressTimer();
+          track.moved = true;
         }
       }
       handlePointerMove(touch.clientX, touch.clientY);
@@ -3112,13 +3105,13 @@ export default function App() {
 
     const onWindowTouchEnd = () => {
       if (screen !== 'game') return;
-      const gesture = touchGestureRef.current;
-      clearTouchLongPressTimer();
+      const track = touchTrackRef.current;
+      touchTrackRef.current = null;
 
-      if (gesture && gesture.isFromGrid && !gesture.moved && !gesture.longPressTriggered && !isGameOver && !isWin) {
-        handleRotate(gesture.id);
+      // Tap (no movement) on a grid piece → rotate
+      if (track && track.isFromGrid && !track.moved && !isGameOver && !isWin) {
+        handleRotate(track.id);
       }
-      touchGestureRef.current = null;
       handlePointerUp();
     };
 
@@ -3132,7 +3125,7 @@ export default function App() {
       window.removeEventListener('touchend', onWindowTouchEnd);
       window.removeEventListener('touchcancel', onWindowTouchEnd);
     };
-  }, [handlePointerUp, screen, clearTouchLongPressTimer, isGameOver, isWin, handleRotate]);
+  }, [handlePointerUp, screen, isGameOver, isWin, handleRotate]);
 
   // Lock page scroll on game screen for better mobile playability.
   useEffect(() => {
@@ -3154,11 +3147,8 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
-    return () => {
-      clearTouchLongPressTimer();
-      touchGestureRef.current = null;
-    };
-  }, [clearTouchLongPressTimer]);
+    return () => { touchTrackRef.current = null; };
+  }, []);
 
   const onMouseDown = (e: React.MouseEvent, id: string, isFromGrid: boolean) => {
     e.preventDefault(); // Prevent native drag (🚫 cursor)
@@ -3171,78 +3161,27 @@ export default function App() {
     e.preventDefault();
     const touch = e.touches[0];
     const target = e.currentTarget as HTMLElement;
-    clearTouchLongPressTimer();
-    touchGestureRef.current = null;
 
-    // If already dragging a different piece, cleanly end that drag first.
+    // If already dragging a different piece, end that drag synchronously.
     if (isDraggingRef.current) {
       dragStartRef.current = null;
       isDraggingRef.current = false;
       setDraggedPiece(null);
     }
+    touchTrackRef.current = null;
 
+    // Start the new drag immediately — the piece follows the finger from
+    // the very first touchmove, with no threshold delay.
     handlePointerDown(touch.clientX, touch.clientY, id, isFromGrid, target);
 
-    const gesture: TouchGestureState = {
+    // Record touch start position so we can distinguish tap vs drag later.
+    touchTrackRef.current = {
       id,
       isFromGrid,
-      target,
       startX: touch.clientX,
       startY: touch.clientY,
       moved: false,
-      dragStarted: true,
-      longPressTriggered: false,
     };
-    touchGestureRef.current = gesture;
-
-    // For already-placed pieces: keep tap/hold shortcuts while dragging starts immediately.
-    if (isFromGrid) {
-      touchLongPressTimerRef.current = window.setTimeout(() => {
-        const active = touchGestureRef.current;
-        if (!active || active.id !== id || active.moved || !active.isFromGrid) return;
-        active.longPressTriggered = true;
-        handleFlip(id);
-      }, TOUCH_LONG_PRESS_MS);
-    }
-  };
-  const onTouchMove = (e: React.TouchEvent) => {
-    e.preventDefault();
-    const touch = e.touches[0];
-    const gesture = touchGestureRef.current;
-    if (!gesture) {
-      handlePointerMove(touch.clientX, touch.clientY);
-      return;
-    }
-
-    const distance = Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY);
-    if (!gesture.moved && distance >= TOUCH_DRAG_THRESHOLD_PX) {
-      gesture.moved = true;
-      clearTouchLongPressTimer();
-    }
-
-    if (gesture.dragStarted) {
-      handlePointerMove(touch.clientX, touch.clientY);
-    }
-  };
-  const onTouchEnd = () => {
-    const gesture = touchGestureRef.current;
-    clearTouchLongPressTimer();
-
-    if (!gesture) {
-      handlePointerUp();
-      return;
-    }
-
-    if (gesture.dragStarted) {
-      handlePointerUp();
-    }
-
-    // Mobile shortcuts only for pieces already on board.
-    if (gesture.isFromGrid && !gesture.moved && !gesture.longPressTriggered && !isGameOver && !isWin) {
-      handleRotate(gesture.id);
-    }
-
-    touchGestureRef.current = null;
   };
 
   const formatTime = (seconds: number) => {
@@ -3541,9 +3480,6 @@ export default function App() {
       )}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchEnd}
     >
       <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
       {/* Header */}
