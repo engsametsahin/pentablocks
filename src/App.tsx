@@ -1857,6 +1857,20 @@ function CornerAccountNav({
             : 'bg-white/90 border-black/10 text-black',
         )}
       >
+        {user && (
+          <>
+            <span
+              className={cn(
+                'max-w-[140px] truncate text-sm font-bold',
+                resolvedTheme === 'dark' ? 'text-emerald-300' : 'text-emerald-700',
+              )}
+              title={user.displayName}
+            >
+              {user.displayName}
+            </span>
+            <span className={cn('text-xs', resolvedTheme === 'dark' ? 'text-white/25' : 'text-black/20')}>|</span>
+          </>
+        )}
         <button
           onClick={onProfile}
           className={cn(
