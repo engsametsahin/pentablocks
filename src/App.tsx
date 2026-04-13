@@ -3312,6 +3312,30 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
+    if (screen !== 'game') return;
+    const shouldResetViewport = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && (window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(max-width: 768px)').matches);
+    if (!shouldResetViewport) return;
+
+    const resetViewportToTop = () => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      gameSurfaceRef.current?.scrollIntoView({ block: 'start', inline: 'nearest' });
+    };
+
+    resetViewportToTop();
+    const rafId = window.requestAnimationFrame(resetViewportToTop);
+    const timeoutId = window.setTimeout(resetViewportToTop, 120);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [screen, level, gameMode, activeChallenge?.code]);
+
+  useEffect(() => {
     return () => { touchTrackRef.current = null; };
   }, []);
 
