@@ -76,6 +76,7 @@ interface PointerTrack {
   pointerId: number;
   id: string;
   isFromGrid: boolean;
+  pointerType: 'mouse' | 'touch' | 'pen' | 'legacy-touch';
   startX: number;
   startY: number;
   lastX: number;
@@ -3343,6 +3344,7 @@ export default function App() {
       pointerId: 0,
       id,
       isFromGrid,
+      pointerType: 'legacy-touch',
       startX: touch.clientX,
       startY: touch.clientY,
       lastX: touch.clientX,
@@ -3376,6 +3378,7 @@ export default function App() {
       pointerId: e.pointerId,
       id,
       isFromGrid,
+      pointerType: e.pointerType === 'mouse' || e.pointerType === 'pen' ? e.pointerType : 'touch',
       startX: e.clientX,
       startY: e.clientY,
       lastX: e.clientX,
@@ -3421,7 +3424,14 @@ export default function App() {
       if (track.longPressTimer) {
         window.clearTimeout(track.longPressTimer);
       }
-      if (!track.moved && !track.longPressTriggered && track.isFromGrid && !isGameOver && !isWin) {
+      if (
+        track.pointerType !== 'mouse'
+        && !track.moved
+        && !track.longPressTriggered
+        && track.isFromGrid
+        && !isGameOver
+        && !isWin
+      ) {
         handleRotate(track.id);
       }
     }
