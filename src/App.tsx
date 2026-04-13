@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RotateCw, FlipHorizontal, RefreshCw, Trophy, Timer, ChevronRight, ChevronLeft, Lock, Users, User, Star, BarChart3, Target, Zap, Medal, Link2, Copy } from 'lucide-react';
 import { ALL_PIECES, Piece, Point, rotateShape, flipShape } from './constants';
@@ -11,7 +11,7 @@ import { solveKatamino } from './solver';
 import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
 import { configureAdSensePreference, initializeAdSense } from './lib/adsense';
-import { fetchCloudProgress, fetchCurrentUser, saveCloudProgress, signInEmail, signInGoogle, signInGuest, signOutCloud, signUpEmail, updateGuestNickname, type CloudUser } from './lib/cloud';
+import { bulkUpdateAdminMembership, fetchAdminUsers, fetchCloudProgress, fetchCurrentUser, resendEmailVerification, saveCloudProgress, signInEmail, signInGoogle, signInGuest, signOutCloud, signUpEmail, updateAdminMembership, updateGuestNickname, verifyEmailConfirmation, type AdminCloudUser, type CloudUser } from './lib/cloud';
 import { mountGoogleLoginButton } from './lib/googleIdentity';
 import { playSoundCue, unlockAudio } from './lib/sound';
 import {
@@ -57,7 +57,7 @@ function getResponsiveCellSize(viewportWidth: number) {
   return CELL_SIZE;
 }
 
-type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer';
+type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer' | 'profile' | 'admin';
 type GameMode = 'single' | 'multiplayer';
 type RoomDifficulty = 'easy' | 'moderate' | 'hard' | 'very_hard';
 type ThemeMode = 'dark' | 'light' | 'auto';
@@ -461,6 +461,18 @@ function authErrorToMessage(error: unknown) {
     guest_auth_failed: 'Guest sign-in failed. Try again.',
     email_register_failed: 'Email registration failed. Try again.',
     email_login_failed: 'Email sign-in failed. Try again.',
+    email_verification_failed: 'Email confirmation could not be completed.',
+    email_verification_resend_failed: 'Could not resend the confirmation email.',
+    email_verification_not_applicable: 'This account does not use email confirmation.',
+    missing_verification_token: 'Confirmation token is missing.',
+    verification_token_invalid: 'This confirmation link is invalid.',
+    verification_token_expired: 'This confirmation link has expired. Please request a new one.',
+    admin_only_operation: 'This action is only available to admins.',
+    admin_users_fetch_failed: 'Could not load admin user list.',
+    admin_membership_update_failed: 'Could not update membership right now.',
+    admin_user_not_found: 'User not found.',
+    invalid_membership_tier: 'Invalid membership tier.',
+    invalid_user_id: 'Invalid user id.',
     unauthorized: 'Please sign in first to use cloud multiplayer.',
     challenge_not_found: 'Challenge code not found.',
     challenge_closed: 'This challenge is already closed.',
@@ -557,6 +569,9 @@ function MenuScreen({
   continueLevel,
   onStats,
   onMultiplayer,
+  onProfile,
+  canOpenAdmin,
+  onAdmin,
   resolvedTheme,
 }: {
   onSinglePlayer: () => void;
@@ -564,6 +579,9 @@ function MenuScreen({
   continueLevel?: number;
   onStats: () => void;
   onMultiplayer: () => void;
+  onProfile: () => void;
+  canOpenAdmin: boolean;
+  onAdmin: () => void;
   resolvedTheme: 'dark' | 'light';
 }) {
   return (
@@ -617,6 +635,25 @@ function MenuScreen({
         >
           <BarChart3 size={22} /> Stats
         </button>
+        <button
+          onClick={onProfile}
+          className={cn(
+            'w-full py-5 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 transition-all active:scale-95',
+            resolvedTheme === 'dark'
+              ? 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
+              : 'bg-white text-black hover:bg-gray-100 border border-black/10',
+          )}
+        >
+          <User size={22} /> Profile
+        </button>
+        {canOpenAdmin && (
+          <button
+            onClick={onAdmin}
+            className="w-full py-5 bg-amber-400 text-black rounded-2xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-amber-300 transition-all active:scale-95"
+          >
+            <Lock size={22} /> Admin
+          </button>
+        )}
         <button
           onClick={onMultiplayer}
           className={cn(
@@ -1729,7 +1766,7 @@ function AccountPanel({
   };
 
   return (
-    <div className="fixed top-4 right-4 z-[82] w-[320px] max-w-[calc(100vw-2rem)]">
+    <div className="w-full">
       <div className="bg-white border border-black/10 rounded-3xl shadow-xl p-4">
         <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Cloud Profile</p>
 
@@ -1830,6 +1867,402 @@ function AccountPanel({
   );
 }
 
+function ThemeSettingsCard({
+  themeMode,
+  resolvedTheme,
+  onChange,
+}: {
+  themeMode: ThemeMode;
+  resolvedTheme: 'dark' | 'light';
+  onChange: (mode: ThemeMode) => void;
+}) {
+  return (
+    <div className="bg-white border border-black/10 rounded-3xl shadow-xl p-5">
+      <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Theme</p>
+      <p className="text-sm text-gray-600 mb-3">
+        Current look:
+        {' '}
+        <span className="font-bold text-black">{resolvedTheme === 'dark' ? 'Dark' : 'Light'}</span>
+      </p>
+      <select
+        value={themeMode}
+        onChange={(e) => onChange(e.target.value as ThemeMode)}
+        className="w-full text-sm font-semibold rounded-xl border border-black/10 px-3 py-3 bg-white"
+        aria-label="Theme mode"
+      >
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="auto">Auto (System)</option>
+      </select>
+    </div>
+  );
+}
+
+function ProfileScreen({
+  user,
+  authLoading,
+  authError,
+  syncStateLabel,
+  googleEnabled,
+  googleSlotRef,
+  themeMode,
+  resolvedTheme,
+  onThemeChange,
+  onGuestLogin,
+  onEmailLogin,
+  onEmailRegister,
+  onLogout,
+  onBack,
+  onResendVerification,
+  onOpenAdmin,
+}: {
+  user: CloudUser | null;
+  authLoading: boolean;
+  authError: string | null;
+  syncStateLabel: string;
+  googleEnabled: boolean;
+  googleSlotRef: React.RefObject<HTMLDivElement | null>;
+  themeMode: ThemeMode;
+  resolvedTheme: 'dark' | 'light';
+  onThemeChange: (mode: ThemeMode) => void;
+  onGuestLogin: () => Promise<boolean>;
+  onEmailLogin: (params: { email: string; password: string }) => void;
+  onEmailRegister: (params: { email: string; password: string; displayName: string }) => void;
+  onLogout: () => void;
+  onBack: () => void;
+  onResendVerification: () => void;
+  onOpenAdmin: () => void;
+}) {
+  const membershipLabel = user?.membershipTier === 'pro' ? 'Pro Member' : 'Basic Member';
+  const membershipTone = user?.membershipTier === 'pro'
+    ? 'bg-emerald-500 text-black'
+    : 'bg-gray-900 text-white';
+
+  return (
+    <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
+      <div className="max-w-5xl mx-auto">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={onBack}
+              className="p-3 rounded-xl transition-all active:scale-95 bg-black text-white hover:bg-gray-800"
+              aria-label="Back to menu"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <div>
+              <h1 className="text-3xl font-black tracking-tight">Profile</h1>
+              <p className="text-sm text-gray-500">Manage account, membership, and theme settings.</p>
+            </div>
+          </div>
+          <div className={cn('px-4 py-2 rounded-full text-xs font-black uppercase tracking-[0.18em]', membershipTone)}>
+            {membershipLabel}
+          </div>
+        </div>
+
+        {user?.provider === 'email' && !user.emailVerifiedAt && (
+          <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            <p className="font-bold mb-1">Email confirmation required</p>
+            <p className="mb-3">Please confirm your email address to fully secure your PentaBlocks account.</p>
+            <button
+              onClick={onResendVerification}
+              className="px-4 py-2 rounded-xl bg-amber-500 text-white font-bold hover:bg-amber-600 transition-all"
+            >
+              Resend confirmation email
+            </button>
+          </div>
+        )}
+
+        <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <AccountPanel
+            user={user}
+            authLoading={authLoading}
+            authError={authError}
+            syncStateLabel={syncStateLabel}
+            googleEnabled={googleEnabled}
+            googleSlotRef={googleSlotRef}
+            onGuestLogin={onGuestLogin}
+            onEmailLogin={onEmailLogin}
+            onEmailRegister={onEmailRegister}
+            onLogout={onLogout}
+          />
+
+          <div className="flex flex-col gap-6">
+            <ThemeSettingsCard
+              themeMode={themeMode}
+              resolvedTheme={resolvedTheme}
+              onChange={onThemeChange}
+            />
+
+            <div className="bg-white border border-black/10 rounded-3xl shadow-xl p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Membership</p>
+              <p className="text-lg font-black text-black mb-2">{membershipLabel}</p>
+              <p className="text-sm text-gray-600 mb-2">
+                Every new account starts as
+                {' '}
+                <span className="font-bold text-black">Basic</span>.
+              </p>
+              <p className="text-sm text-gray-600">
+                Pro members see
+                {' '}
+                <span className="font-bold text-black">no ads</span>
+                {' '}
+                during play. Upgrade flow can be connected next.
+              </p>
+              {user?.isAdmin && (
+                <button
+                  onClick={onOpenAdmin}
+                  className="mt-4 px-4 py-3 rounded-xl bg-amber-400 text-black text-sm font-bold hover:bg-amber-300 transition-all"
+                >
+                  Open Admin Panel
+                </button>
+              )}
+            </div>
+
+            <div className="bg-white border border-black/10 rounded-3xl shadow-xl p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Status</p>
+              <div className="space-y-2 text-sm text-gray-600">
+                <p>
+                  Sync:
+                  {' '}
+                  <span className="font-bold text-black">{syncStateLabel}</span>
+                </p>
+                <p>
+                  Provider:
+                  {' '}
+                  <span className="font-bold text-black">{user ? user.provider : 'not signed in'}</span>
+                </p>
+                <p>
+                  Email:
+                  {' '}
+                  <span className="font-bold text-black">
+                    {user?.email ?? 'not connected'}
+                  </span>
+                </p>
+                <p>
+                  Verification:
+                  {' '}
+                  <span className="font-bold text-black">
+                    {user?.provider === 'email'
+                      ? (user.emailVerifiedAt ? 'confirmed' : 'pending')
+                      : 'not required'}
+                  </span>
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminScreen({
+  user,
+  users,
+  selectedUserIds,
+  loading,
+  search,
+  providerFilter,
+  membershipFilter,
+  verificationFilter,
+  onSearchChange,
+  onProviderFilterChange,
+  onMembershipFilterChange,
+  onVerificationFilterChange,
+  onToggleUserSelection,
+  onToggleSelectAll,
+  onRefresh,
+  onSetMembership,
+  onBulkSetMembership,
+  onBack,
+}: {
+  user: CloudUser | null;
+  users: AdminCloudUser[];
+  selectedUserIds: number[];
+  loading: boolean;
+  search: string;
+  providerFilter: 'all' | 'guest';
+  membershipFilter: 'all' | 'pro';
+  verificationFilter: 'all' | 'verified';
+  onSearchChange: (value: string) => void;
+  onProviderFilterChange: (value: 'all' | 'guest') => void;
+  onMembershipFilterChange: (value: 'all' | 'pro') => void;
+  onVerificationFilterChange: (value: 'all' | 'verified') => void;
+  onToggleUserSelection: (userId: number) => void;
+  onToggleSelectAll: () => void;
+  onRefresh: () => void;
+  onSetMembership: (userId: number, membershipTier: 'basic' | 'pro') => void;
+  onBulkSetMembership: (membershipTier: 'basic' | 'pro') => void;
+  onBack: () => void;
+}) {
+  const allSelected = users.length > 0 && selectedUserIds.length === users.length;
+
+  return (
+    <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
+      <div className="max-w-6xl mx-auto">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={onBack}
+              className="p-3 rounded-xl transition-all active:scale-95 bg-black text-white hover:bg-gray-800"
+              aria-label="Back to profile"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <div>
+              <h1 className="text-3xl font-black tracking-tight">Admin Panel</h1>
+              <p className="text-sm text-gray-500">
+                Manual membership management for
+                {' '}
+                <span className="font-bold text-black">{user?.displayName ?? 'admin'}</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search by name or email"
+              className="w-72 max-w-full rounded-xl border border-black/10 bg-white px-4 py-3 text-sm"
+            />
+            <button
+              onClick={onRefresh}
+              className="px-4 py-3 rounded-xl bg-black text-white text-sm font-bold hover:bg-gray-800 transition-all"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-6 grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto]">
+          <select
+            value={providerFilter}
+            onChange={(e) => onProviderFilterChange(e.target.value as 'all' | 'guest')}
+            className="rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold"
+          >
+            <option value="all">All providers</option>
+            <option value="guest">Guest only</option>
+          </select>
+          <select
+            value={membershipFilter}
+            onChange={(e) => onMembershipFilterChange(e.target.value as 'all' | 'pro')}
+            className="rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold"
+          >
+            <option value="all">All memberships</option>
+            <option value="pro">Pro only</option>
+          </select>
+          <select
+            value={verificationFilter}
+            onChange={(e) => onVerificationFilterChange(e.target.value as 'all' | 'verified')}
+            className="rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold"
+          >
+            <option value="all">All verification states</option>
+            <option value="verified">Verified only</option>
+          </select>
+          <button
+            onClick={onToggleSelectAll}
+            className="rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-all"
+          >
+            {allSelected ? 'Clear Selection' : 'Select Visible'}
+          </button>
+        </div>
+
+        {selectedUserIds.length > 0 && (
+          <div className="mb-6 flex flex-col gap-3 rounded-3xl border border-black/10 bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+            <p className="text-sm text-gray-600">
+              <span className="font-black text-black">{selectedUserIds.length}</span>
+              {' '}
+              users selected
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => onBulkSetMembership('basic')}
+                disabled={loading}
+                className="px-4 py-2 rounded-xl border border-black/10 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+              >
+                Set Basic
+              </button>
+              <button
+                onClick={() => onBulkSetMembership('pro')}
+                disabled={loading}
+                className="px-4 py-2 rounded-xl bg-emerald-500 text-black text-sm font-bold hover:bg-emerald-400 disabled:opacity-40"
+              >
+                Set Pro
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="bg-white border border-black/10 rounded-3xl shadow-xl overflow-hidden">
+          <div className="grid grid-cols-[0.3fr_1.6fr_1fr_0.8fr_0.8fr_0.8fr] gap-4 px-5 py-4 border-b border-black/5 text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400">
+            <span>Select</span>
+            <span>User</span>
+            <span>Provider</span>
+            <span>Membership</span>
+            <span>Verified</span>
+            <span>Actions</span>
+          </div>
+
+          <div className="divide-y divide-black/5">
+            {users.map((row) => (
+              <div key={row.id} className="grid grid-cols-[0.3fr_1.6fr_1fr_0.8fr_0.8fr_0.8fr] gap-4 px-5 py-4 items-center text-sm">
+                <div>
+                  <input
+                    type="checkbox"
+                    checked={selectedUserIds.includes(row.id)}
+                    onChange={() => onToggleUserSelection(row.id)}
+                    className="h-4 w-4 rounded border-black/20"
+                    aria-label={`Select ${row.displayName}`}
+                  />
+                </div>
+                <div>
+                  <p className="font-black text-black">{row.displayName}</p>
+                  <p className="text-xs text-gray-500">{row.email ?? `User #${row.id}`}</p>
+                </div>
+                <div className="text-gray-600">{row.provider}</div>
+                <div>
+                  <span className={cn(
+                    'inline-flex px-3 py-1 rounded-full text-xs font-black uppercase tracking-[0.14em]',
+                    row.membershipTier === 'pro' ? 'bg-emerald-500 text-black' : 'bg-gray-900 text-white',
+                  )}>
+                    {row.membershipTier}
+                  </span>
+                </div>
+                <div className="text-gray-600">{row.emailVerifiedAt ? 'Yes' : 'No'}</div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => onSetMembership(row.id, 'basic')}
+                    disabled={loading || row.membershipTier === 'basic'}
+                    className="px-3 py-2 rounded-xl border border-black/10 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                  >
+                    Basic
+                  </button>
+                  <button
+                    onClick={() => onSetMembership(row.id, 'pro')}
+                    disabled={loading || row.membershipTier === 'pro'}
+                    className="px-3 py-2 rounded-xl bg-emerald-500 text-black text-xs font-bold hover:bg-emerald-400 disabled:opacity-40"
+                  >
+                    Pro
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {users.length === 0 && (
+              <div className="px-5 py-10 text-center text-sm text-gray-500">
+                No users found for this search.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ErrorModal({ message, onClose }: { message: string; onClose: () => void }) {
   return (
     <motion.div
@@ -1898,6 +2331,13 @@ export default function App() {
   const [authUser, setAuthUser] = useState<CloudUser | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [adminUsers, setAdminUsers] = useState<AdminCloudUser[]>([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminProviderFilter, setAdminProviderFilter] = useState<'all' | 'guest'>('all');
+  const [adminMembershipFilter, setAdminMembershipFilter] = useState<'all' | 'pro'>('all');
+  const [adminVerificationFilter, setAdminVerificationFilter] = useState<'all' | 'verified'>('all');
+  const [selectedAdminUserIds, setSelectedAdminUserIds] = useState<number[]>([]);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudReady, setCloudReady] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
@@ -1954,6 +2394,7 @@ export default function App() {
   const resolvedTheme: 'dark' | 'light' = themeMode === 'auto'
     ? (systemPrefersDark ? 'dark' : 'light')
     : themeMode;
+  const isProMember = authUser?.membershipTier === 'pro';
   const stashSlotOrder = stashOrderRef.current;
 
   useEffect(() => {
@@ -2214,10 +2655,10 @@ export default function App() {
     try {
       setAuthError(null);
       setAuthLoading(true);
-      const user = await signUpEmail(params);
-      setAuthUser(user);
+      const payload = await signUpEmail(params);
+      setAuthUser(payload.user);
       await hydrateCloudForUser();
-      showToast('Email account created and synced.', 'success');
+      showToast(payload.verificationEmailSent ? 'Account created. Please confirm your email.' : 'Email account created and synced.', 'success');
       trackEvent('auth_login', { provider: 'email_register' });
     } catch (error) {
       setAuthError(authErrorToMessage(error));
@@ -2266,6 +2707,87 @@ export default function App() {
       setAuthError(authErrorToMessage(error));
     }
   }, [clearLegacyLocalProgress, resetProgressToDefaults, showToast]);
+
+  const handleResendVerification = useCallback(async () => {
+    try {
+      setAuthError(null);
+      await resendEmailVerification();
+      showToast('Confirmation email sent.', 'success');
+    } catch (error) {
+      setAuthError(authErrorToMessage(error));
+    }
+  }, [showToast]);
+
+  const loadAdminUsers = useCallback(async (search = '') => {
+    try {
+      setAdminLoading(true);
+      const payload = await fetchAdminUsers(search);
+      setAdminUsers(payload.users);
+    } catch (error) {
+      setAuthError(authErrorToMessage(error));
+    } finally {
+      setAdminLoading(false);
+    }
+  }, []);
+
+  const handleAdminMembershipChange = useCallback(async (userId: number, membershipTier: 'basic' | 'pro') => {
+    try {
+      setAdminLoading(true);
+      const payload = await updateAdminMembership(userId, membershipTier);
+      setAdminUsers((prev) => prev.map((entry) => (entry.id === userId ? payload.user : entry)));
+      if (authUser?.id === userId) {
+        setAuthUser(payload.user);
+      }
+      showToast(`Membership updated to ${membershipTier}.`, 'success');
+    } catch (error) {
+      setAuthError(authErrorToMessage(error));
+    } finally {
+      setAdminLoading(false);
+    }
+  }, [authUser?.id, showToast]);
+
+  const handleToggleAdminUserSelection = useCallback((userId: number) => {
+    setSelectedAdminUserIds((prev) => (
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    ));
+  }, []);
+
+  const filteredAdminUsers = useMemo(() => adminUsers.filter((entry) => {
+    if (adminProviderFilter === 'guest' && entry.provider !== 'guest') return false;
+    if (adminMembershipFilter === 'pro' && entry.membershipTier !== 'pro') return false;
+    if (adminVerificationFilter === 'verified' && !entry.emailVerifiedAt) return false;
+    return true;
+  }), [adminUsers, adminProviderFilter, adminMembershipFilter, adminVerificationFilter]);
+
+  const handleToggleSelectAllAdminUsers = useCallback(() => {
+    setSelectedAdminUserIds((prev) => {
+      const visibleIds = filteredAdminUsers.map((entry) => entry.id);
+      const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.includes(id));
+      if (allVisibleSelected) {
+        return prev.filter((id) => !visibleIds.includes(id));
+      }
+      return Array.from(new Set([...prev, ...visibleIds]));
+    });
+  }, [filteredAdminUsers]);
+
+  const handleBulkAdminMembershipChange = useCallback(async (membershipTier: 'basic' | 'pro') => {
+    if (selectedAdminUserIds.length === 0) return;
+    try {
+      setAdminLoading(true);
+      const payload = await bulkUpdateAdminMembership(selectedAdminUserIds, membershipTier);
+      const updatedMap = new Map(payload.users.map((entry) => [entry.id, entry] as const));
+      setAdminUsers((prev) => prev.map((entry) => updatedMap.get(entry.id) ?? entry));
+      if (authUser && updatedMap.has(authUser.id)) {
+        setAuthUser(updatedMap.get(authUser.id) ?? authUser);
+      }
+      showToast(`${payload.users.length} users updated to ${membershipTier}.`, 'success');
+      setSelectedAdminUserIds([]);
+    } catch (error) {
+      setAuthError(authErrorToMessage(error));
+    } finally {
+      setAdminLoading(false);
+    }
+  }, [authUser, selectedAdminUserIds, showToast]);
 
   useEffect(() => {
     const rawCount = Number(localStorage.getItem(SESSION_COUNT_KEY) ?? '0');
@@ -2374,11 +2896,20 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [authUser, handleGoogleCredential, googleEnabled]);
+  }, [authUser, handleGoogleCredential, googleEnabled, screen]);
 
   useEffect(() => {
     trackEvent('screen_view', { screen });
   }, [screen]);
+
+  useEffect(() => {
+    if (screen !== 'admin' || !authUser?.isAdmin) return;
+    void loadAdminUsers(adminSearch);
+  }, [screen, authUser?.isAdmin, adminSearch, loadAdminUsers]);
+
+  useEffect(() => {
+    setSelectedAdminUserIds((prev) => prev.filter((id) => filteredAdminUsers.some((entry) => entry.id === id)));
+  }, [filteredAdminUsers]);
 
   useEffect(() => {
     let active = true;
@@ -2405,13 +2936,46 @@ export default function App() {
   useEffect(() => {
     if (!consent) return;
     localStorage.setItem(CONSENT_KEY, JSON.stringify(consent));
+    if (isProMember) return;
     configureAdSensePreference(consent.personalizedAds);
     if (initializeAdSense(consent.personalizedAds)) {
       trackEvent('adsense_initialized', {
         personalized_ads: consent.personalizedAds,
       });
     }
-  }, [consent]);
+  }, [consent, isProMember]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('verifyEmail');
+    if (!token) return;
+
+    let active = true;
+    const verify = async () => {
+      try {
+        const payload = await verifyEmailConfirmation(token);
+        if (!active) return;
+        if (payload.user) {
+          setAuthUser(payload.user);
+        }
+        showToast(payload.alreadyVerified ? 'Email already confirmed.' : 'Email confirmed successfully.', 'success');
+        setScreen('profile');
+      } catch (error) {
+        if (!active) return;
+        setAuthError(authErrorToMessage(error));
+        setScreen('profile');
+      } finally {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.delete('verifyEmail');
+        window.history.replaceState({}, '', nextUrl.toString());
+      }
+    };
+
+    void verify();
+    return () => {
+      active = false;
+    };
+  }, [showToast]);
 
   useEffect(() => {
     if (!authUser || !cloudReady || gameMode !== 'single') return;
@@ -2966,7 +3530,7 @@ export default function App() {
         if (gameMode === 'single' && level < MAX_LEVEL) {
           setCompletedThisSession((prev) => {
             const next = prev + 1;
-            const shouldShowAdBreak = !isFirstSession && next % AD_BREAK_INTERVAL === 0;
+            const shouldShowAdBreak = !isProMember && !isFirstSession && next % AD_BREAK_INTERVAL === 0;
             if (shouldShowAdBreak) {
               setAdBreakLevel(level + 1);
               trackEvent('ad_break_eligible', {
@@ -2981,7 +3545,7 @@ export default function App() {
         }
       }
     }
-  }, [placedPieces, isShowingSolution, isGameOver, totalPiecesCount, gridWidth, gridHeight, targetCells, level, timeLeft, markLevelComplete, saveBestTime, updatePlayerStats, showToast, completedLevels, bestTimes, isFirstSession, gameMode, submitChallengeResult]);
+  }, [placedPieces, isShowingSolution, isGameOver, totalPiecesCount, gridWidth, gridHeight, targetCells, level, timeLeft, markLevelComplete, saveBestTime, updatePlayerStats, showToast, completedLevels, bestTimes, isFirstSession, gameMode, submitChallengeResult, isProMember]);
 
   const handleRotate = useCallback((id: string) => {
     setPlacedPieces((prev) => {
@@ -3656,20 +4220,10 @@ export default function App() {
           onSinglePlayer={() => setScreen('levelSelect')}
           onStats={() => setScreen('stats')}
           onMultiplayer={() => setScreen('multiplayer')}
+          onProfile={() => setScreen('profile')}
+          canOpenAdmin={Boolean(authUser?.isAdmin)}
+          onAdmin={() => setScreen('admin')}
           resolvedTheme={resolvedTheme}
-        />
-        <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-        <AccountPanel
-          user={authUser}
-          authLoading={authLoading}
-          authError={authError}
-          syncStateLabel={cloudSyncing ? 'Syncing to cloud...' : 'Cloud sync ready'}
-          googleEnabled={googleEnabled}
-          googleSlotRef={googleButtonRef}
-          onGuestLogin={handleGuestLogin}
-          onEmailLogin={handleEmailLogin}
-          onEmailRegister={handleEmailRegister}
-          onLogout={handleLogout}
         />
         {!consent && (
           <ConsentBanner
@@ -3693,7 +4247,6 @@ export default function App() {
           multiplayerStats={multiplayerStats}
           onToast={showToast}
         />
-        <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
         {!consent && (
           <ConsentBanner
             onAcceptPersonalized={() => applyConsent(true)}
@@ -3715,7 +4268,6 @@ export default function App() {
           onStats={() => setScreen('stats')}
           resolvedTheme={resolvedTheme}
         />
-        <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
         {!consent && (
           <ConsentBanner
             onAcceptPersonalized={() => applyConsent(true)}
@@ -3737,7 +4289,70 @@ export default function App() {
           onPlay={() => setScreen('levelSelect')}
           resolvedTheme={resolvedTheme}
         />
-        <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+        {!consent && (
+          <ConsentBanner
+            onAcceptPersonalized={() => applyConsent(true)}
+            onAcceptEssential={() => applyConsent(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  if (screen === 'profile') {
+    return (
+      <>
+        <ProfileScreen
+          user={authUser}
+          authLoading={authLoading}
+          authError={authError}
+          syncStateLabel={cloudSyncing ? 'Syncing to cloud...' : 'Cloud sync ready'}
+          googleEnabled={googleEnabled}
+          googleSlotRef={googleButtonRef}
+          themeMode={themeMode}
+          resolvedTheme={resolvedTheme}
+          onThemeChange={setThemeMode}
+          onGuestLogin={handleGuestLogin}
+          onEmailLogin={handleEmailLogin}
+          onEmailRegister={handleEmailRegister}
+          onLogout={handleLogout}
+          onBack={() => setScreen('menu')}
+          onResendVerification={handleResendVerification}
+          onOpenAdmin={() => setScreen('admin')}
+        />
+        {!consent && (
+          <ConsentBanner
+            onAcceptPersonalized={() => applyConsent(true)}
+            onAcceptEssential={() => applyConsent(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  if (screen === 'admin') {
+    return (
+      <>
+        <AdminScreen
+          user={authUser}
+          users={filteredAdminUsers}
+          selectedUserIds={selectedAdminUserIds}
+          loading={adminLoading}
+          search={adminSearch}
+          providerFilter={adminProviderFilter}
+          membershipFilter={adminMembershipFilter}
+          verificationFilter={adminVerificationFilter}
+          onSearchChange={setAdminSearch}
+          onProviderFilterChange={setAdminProviderFilter}
+          onMembershipFilterChange={setAdminMembershipFilter}
+          onVerificationFilterChange={setAdminVerificationFilter}
+          onToggleUserSelection={handleToggleAdminUserSelection}
+          onToggleSelectAll={handleToggleSelectAllAdminUsers}
+          onRefresh={() => { void loadAdminUsers(adminSearch); }}
+          onSetMembership={handleAdminMembershipChange}
+          onBulkSetMembership={handleBulkAdminMembershipChange}
+          onBack={() => setScreen('profile')}
+        />
         {!consent && (
           <ConsentBanner
             onAcceptPersonalized={() => applyConsent(true)}
@@ -3770,7 +4385,6 @@ export default function App() {
       onPointerUp={onSurfacePointerUp}
       onPointerCancel={onSurfacePointerCancel}
     >
-      <ThemePicker themeMode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
       {/* Header */}
       <div className="w-full max-w-4xl flex flex-col md:flex-row justify-between items-center mb-4 md:mb-8 gap-4">
         <div className="flex items-center gap-4">

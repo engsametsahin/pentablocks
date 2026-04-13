@@ -5,9 +5,17 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT,
   display_name TEXT NOT NULL,
   avatar_url TEXT,
+  membership_tier TEXT NOT NULL DEFAULT 'basic',
+  email_verified_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS membership_tier TEXT NOT NULL DEFAULT 'basic';
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
 
 DO $$
 DECLARE
@@ -25,6 +33,22 @@ BEGIN
 
   IF chk_name IS NOT NULL THEN
     EXECUTE format('ALTER TABLE users DROP CONSTRAINT %I', chk_name);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'users'
+      AND nsp.nspname = current_schema()
+      AND con.conname = 'users_membership_tier_check'
+  ) THEN
+    ALTER TABLE users
+      ADD CONSTRAINT users_membership_tier_check CHECK (membership_tier IN ('basic', 'pro'));
   END IF;
 END $$;
 
@@ -74,6 +98,22 @@ CREATE TABLE IF NOT EXISTS user_credentials (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS email_verification_tokens_user_idx
+  ON email_verification_tokens (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS email_verification_tokens_expires_idx
+  ON email_verification_tokens (expires_at);
 
 CREATE TABLE IF NOT EXISTS multiplayer_challenges (
   id BIGSERIAL PRIMARY KEY,

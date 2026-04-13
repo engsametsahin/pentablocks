@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { parse as parseCookie, serialize as serializeCookie } from 'cookie';
 import { OAuth2Client } from 'google-auth-library';
+import nodemailer from 'nodemailer';
 import { pool, ensureSchema, closePool } from './db.mjs';
 
 const app = express();
@@ -10,9 +11,11 @@ const app = express();
 const API_PORT = Number(process.env.API_PORT ?? 8787);
 const APP_ORIGIN = process.env.APP_ORIGIN ?? 'http://localhost:3020';
 const APP_ORIGINS = process.env.APP_ORIGINS ?? '';
+const APP_PUBLIC_URL = process.env.APP_PUBLIC_URL ?? APP_ORIGIN;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? '';
 const SESSION_COOKIE = 'pb_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const EMAIL_VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24;
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 const MAX_LEVEL = 100;
 const CHALLENGE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -28,6 +31,33 @@ const ROOM_DIFFICULTY_START_LEVELS = {
   hard: 60,
   very_hard: 85,
 };
+const SMTP_HOST = process.env.SMTP_HOST ?? '';
+const SMTP_PORT = Number(process.env.SMTP_PORT ?? 587);
+const SMTP_SECURE = String(process.env.SMTP_SECURE ?? '').toLowerCase() === 'true';
+const SMTP_USER = process.env.SMTP_USER ?? '';
+const SMTP_PASS = process.env.SMTP_PASS ?? '';
+const SMTP_FROM = process.env.SMTP_FROM ?? '';
+
+const mailTransport = SMTP_HOST && SMTP_FROM
+  ? nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+    })
+  : null;
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((value) => normalizeEmail(value))
+    .filter(Boolean),
+);
+const ADMIN_USER_IDS = new Set(
+  (process.env.ADMIN_USER_IDS ?? '')
+    .split(',')
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isFinite(value) && value > 0),
+);
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -153,6 +183,68 @@ function verifyPassword(password, salt, expectedHash) {
   const right = Buffer.from(expectedHash, 'hex');
   if (left.length !== right.length) return false;
   return crypto.timingSafeEqual(left, right);
+}
+
+function buildEmailVerificationToken() {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  return { token, tokenHash };
+}
+
+function buildEmailVerificationUrl(token) {
+  const url = new URL(APP_PUBLIC_URL);
+  url.searchParams.set('verifyEmail', token);
+  return url.toString();
+}
+
+function isAdminUser(row) {
+  if (!row) return false;
+  if (ADMIN_USER_IDS.has(Number(row.id))) return true;
+  const normalized = normalizeEmail(row.email);
+  return normalized ? ADMIN_EMAILS.has(normalized) : false;
+}
+
+async function persistEmailVerificationToken(client, userId, email) {
+  const { token, tokenHash } = buildEmailVerificationToken();
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
+  await client.query(
+    `INSERT INTO email_verification_tokens (user_id, email, token_hash, expires_at)
+     VALUES ($1, $2, $3, $4)`,
+    [userId, email, tokenHash, expiresAt],
+  );
+  return { token, expiresAt };
+}
+
+async function sendVerificationEmail({ email, displayName, token }) {
+  const verificationUrl = buildEmailVerificationUrl(token);
+  if (!mailTransport) {
+    console.info(`[email verification disabled] ${email} -> ${verificationUrl}`);
+    return false;
+  }
+
+  await mailTransport.sendMail({
+    from: SMTP_FROM,
+    to: email,
+    subject: 'Confirm your PentaBlocks account',
+    text: `Hi ${displayName},\n\nConfirm your email for PentaBlocks:\n${verificationUrl}\n\nThis link expires in 24 hours.\n`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111">
+        <h2>Confirm your PentaBlocks account</h2>
+        <p>Hi ${displayName},</p>
+        <p>Click the button below to confirm your email address.</p>
+        <p>
+          <a href="${verificationUrl}" style="display:inline-block;padding:12px 18px;background:#111;color:#fff;text-decoration:none;border-radius:12px;font-weight:700">
+            Confirm Email
+          </a>
+        </p>
+        <p>If the button does not work, open this link:</p>
+        <p><a href="${verificationUrl}">${verificationUrl}</a></p>
+        <p>This link expires in 24 hours.</p>
+      </div>
+    `,
+  });
+
+  return true;
 }
 
 function toSafeInt(value, fallback) {
@@ -822,6 +914,9 @@ function toUserDto(row) {
     displayName: row.display_name,
     email: row.email,
     avatarUrl: row.avatar_url,
+    membershipTier: row.membership_tier ?? 'basic',
+    emailVerifiedAt: row.email_verified_at,
+    isAdmin: isAdminUser(row),
   };
 }
 
@@ -881,6 +976,16 @@ async function requireUser(req, res) {
   return user;
 }
 
+async function requireAdmin(req, res) {
+  const user = await requireUser(req, res);
+  if (!user) return null;
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'admin_only_operation' });
+    return null;
+  }
+  return user;
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
@@ -932,12 +1037,16 @@ app.post('/api/auth/google', async (req, res) => {
     const avatar = typeof payload.picture === 'string' ? payload.picture : null;
 
     const upsert = await pool.query(
-      `INSERT INTO users (provider, google_sub, email, display_name, avatar_url)
-       VALUES ('google', $1, $2, $3, $4)
+      `INSERT INTO users (provider, google_sub, email, display_name, avatar_url, email_verified_at)
+       VALUES ('google', $1, $2, $3, $4, CASE WHEN $2 IS NOT NULL THEN NOW() ELSE NULL END)
        ON CONFLICT (google_sub) DO UPDATE SET
          email = EXCLUDED.email,
          display_name = EXCLUDED.display_name,
          avatar_url = EXCLUDED.avatar_url,
+         email_verified_at = CASE
+           WHEN EXCLUDED.email IS NOT NULL THEN NOW()
+           ELSE users.email_verified_at
+         END,
          updated_at = NOW()
        RETURNING *`,
       [payload.sub, email, displayName, avatar],
@@ -993,11 +1102,22 @@ app.post('/api/auth/email/register', async (req, res) => {
        VALUES ($1, $2, $3)`,
       [user.id, hash, salt],
     );
+    const verification = await persistEmailVerificationToken(client, user.id, email);
     await client.query('COMMIT');
+
+    try {
+      await sendVerificationEmail({
+        email,
+        displayName: user.display_name,
+        token: verification.token,
+      });
+    } catch (mailError) {
+      console.error('email verification send error', mailError);
+    }
 
     const token = await createSession(user.id);
     setSessionCookie(res, token);
-    res.status(201).json({ user: toUserDto(user) });
+    res.status(201).json({ user: toUserDto(user), verificationEmailSent: true });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('email register error', error);
@@ -1045,6 +1165,110 @@ app.post('/api/auth/email/login', async (req, res) => {
   }
 });
 
+app.post('/api/auth/email/resend-verification', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+  if (user.provider !== 'email' || !user.email) {
+    res.status(403).json({ error: 'email_verification_not_applicable' });
+    return;
+  }
+  if (user.email_verified_at) {
+    res.json({ ok: true, alreadyVerified: true });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const verification = await persistEmailVerificationToken(client, user.id, user.email);
+    await client.query('COMMIT');
+
+    try {
+      await sendVerificationEmail({
+        email: user.email,
+        displayName: user.display_name,
+        token: verification.token,
+      });
+    } catch (mailError) {
+      console.error('email verification resend error', mailError);
+    }
+
+    res.json({ ok: true, alreadyVerified: false });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('email verification resend failed', error);
+    res.status(500).json({ error: 'email_verification_resend_failed' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/auth/email/verify', async (req, res) => {
+  const token = typeof req.query?.token === 'string' ? req.query.token : '';
+  if (!token) {
+    res.status(400).json({ error: 'missing_verification_token' });
+    return;
+  }
+
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT evt.*, u.display_name
+       FROM email_verification_tokens evt
+       JOIN users u ON u.id = evt.user_id
+       WHERE evt.token_hash = $1
+       LIMIT 1`,
+      [tokenHash],
+    );
+
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'verification_token_invalid' });
+      return;
+    }
+
+    const row = result.rows[0];
+    if (row.used_at) {
+      await client.query('ROLLBACK');
+      res.json({ ok: true, alreadyVerified: true });
+      return;
+    }
+    if (Date.parse(row.expires_at) < Date.now()) {
+      await client.query('ROLLBACK');
+      res.status(410).json({ error: 'verification_token_expired' });
+      return;
+    }
+
+    const updatedUser = await client.query(
+      `UPDATE users
+       SET email_verified_at = COALESCE(email_verified_at, NOW()),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [row.user_id],
+    );
+
+    await client.query(
+      `UPDATE email_verification_tokens
+       SET used_at = NOW()
+       WHERE id = $1`,
+      [row.id],
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, alreadyVerified: false, user: toUserDto(updatedUser.rows[0]) });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('email verify failed', error);
+    res.status(500).json({ error: 'email_verification_failed' });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/auth/me', async (req, res) => {
   try {
     const user = await readAuthedUser(req);
@@ -1087,6 +1311,129 @@ app.post('/api/auth/logout', async (req, res) => {
   }
   clearSessionCookie(res);
   res.json({ ok: true });
+});
+
+app.get('/api/admin/users', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const queryText = typeof req.query?.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+  try {
+    const result = await pool.query(
+      `SELECT id,
+              provider,
+              email,
+              display_name,
+              membership_tier,
+              email_verified_at,
+              created_at,
+              updated_at
+       FROM users
+       WHERE $1 = ''
+          OR lower(display_name) LIKE '%' || $1 || '%'
+          OR lower(COALESCE(email, '')) LIKE '%' || $1 || '%'
+       ORDER BY created_at DESC
+       LIMIT 200`,
+      [queryText],
+    );
+
+    res.json({
+      users: result.rows.map((row) => ({
+        ...toUserDto(row),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    });
+  } catch (error) {
+    console.error('admin users fetch failed', error);
+    res.status(500).json({ error: 'admin_users_fetch_failed' });
+  }
+});
+
+app.put('/api/admin/users/:userId/membership', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const userId = Number(req.params.userId);
+  const membershipTier = typeof req.body?.membershipTier === 'string' ? req.body.membershipTier.trim().toLowerCase() : '';
+  if (!Number.isFinite(userId) || userId <= 0) {
+    res.status(400).json({ error: 'invalid_user_id' });
+    return;
+  }
+  if (membershipTier !== 'basic' && membershipTier !== 'pro') {
+    res.status(400).json({ error: 'invalid_membership_tier' });
+    return;
+  }
+
+  try {
+    const updated = await pool.query(
+      `UPDATE users
+       SET membership_tier = $2,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, provider, email, display_name, membership_tier, email_verified_at, created_at, updated_at`,
+      [userId, membershipTier],
+    );
+
+    if (updated.rows.length === 0) {
+      res.status(404).json({ error: 'admin_user_not_found' });
+      return;
+    }
+
+    res.json({
+      user: {
+        ...toUserDto(updated.rows[0]),
+        createdAt: updated.rows[0].created_at,
+        updatedAt: updated.rows[0].updated_at,
+      },
+    });
+  } catch (error) {
+    console.error('admin membership update failed', error);
+    res.status(500).json({ error: 'admin_membership_update_failed' });
+  }
+});
+
+app.put('/api/admin/users/membership/bulk', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const membershipTier = typeof req.body?.membershipTier === 'string' ? req.body.membershipTier.trim().toLowerCase() : '';
+  const userIds = Array.isArray(req.body?.userIds)
+    ? req.body.userIds
+        .map((value) => Number(value))
+        .filter((value, index, arr) => Number.isFinite(value) && value > 0 && arr.indexOf(value) === index)
+    : [];
+
+  if (membershipTier !== 'basic' && membershipTier !== 'pro') {
+    res.status(400).json({ error: 'invalid_membership_tier' });
+    return;
+  }
+  if (userIds.length === 0) {
+    res.status(400).json({ error: 'invalid_user_id' });
+    return;
+  }
+
+  try {
+    const updated = await pool.query(
+      `UPDATE users
+       SET membership_tier = $2,
+           updated_at = NOW()
+       WHERE id = ANY($1::bigint[])
+       RETURNING id, provider, email, display_name, membership_tier, email_verified_at, created_at, updated_at`,
+      [userIds, membershipTier],
+    );
+
+    res.json({
+      users: updated.rows.map((row) => ({
+        ...toUserDto(row),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    });
+  } catch (error) {
+    console.error('admin bulk membership update failed', error);
+    res.status(500).json({ error: 'admin_membership_update_failed' });
+  }
 });
 
 app.get('/api/progress', async (req, res) => {

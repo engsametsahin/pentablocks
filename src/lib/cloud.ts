@@ -4,6 +4,14 @@ export interface CloudUser {
   displayName: string;
   email: string | null;
   avatarUrl: string | null;
+  membershipTier: 'basic' | 'pro';
+  emailVerifiedAt: string | null;
+  isAdmin: boolean;
+}
+
+export interface AdminCloudUser extends CloudUser {
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CloudPlayerStats {
@@ -122,11 +130,11 @@ export async function signInGoogle(idToken: string) {
 }
 
 export async function signUpEmail(params: { email: string; password: string; displayName?: string }) {
-  const payload = await apiRequest<{ user: CloudUser }>('/api/auth/email/register', {
+  const payload = await apiRequest<{ user: CloudUser; verificationEmailSent?: boolean }>('/api/auth/email/register', {
     method: 'POST',
     body: JSON.stringify(params),
   });
-  return payload.user;
+  return payload;
 }
 
 export async function signInEmail(params: { email: string; password: string }) {
@@ -139,6 +147,39 @@ export async function signInEmail(params: { email: string; password: string }) {
 
 export async function signOutCloud() {
   await apiRequest<{ ok: boolean }>('/api/auth/logout', { method: 'POST', allowUnauthorized: true });
+}
+
+export async function resendEmailVerification() {
+  return apiRequest<{ ok: boolean; alreadyVerified?: boolean }>('/api/auth/email/resend-verification', {
+    method: 'POST',
+  });
+}
+
+export async function verifyEmailConfirmation(token: string) {
+  return apiRequest<{ ok: boolean; alreadyVerified?: boolean; user?: CloudUser }>(`/api/auth/email/verify?token=${encodeURIComponent(token)}`, {
+    method: 'GET',
+  });
+}
+
+export async function fetchAdminUsers(search = '') {
+  const suffix = search.trim() ? `?q=${encodeURIComponent(search.trim())}` : '';
+  return apiRequest<{ users: AdminCloudUser[] }>(`/api/admin/users${suffix}`, {
+    method: 'GET',
+  });
+}
+
+export async function updateAdminMembership(userId: number, membershipTier: 'basic' | 'pro') {
+  return apiRequest<{ user: AdminCloudUser }>(`/api/admin/users/${userId}/membership`, {
+    method: 'PUT',
+    body: JSON.stringify({ membershipTier }),
+  });
+}
+
+export async function bulkUpdateAdminMembership(userIds: number[], membershipTier: 'basic' | 'pro') {
+  return apiRequest<{ users: AdminCloudUser[] }>('/api/admin/users/membership/bulk', {
+    method: 'PUT',
+    body: JSON.stringify({ userIds, membershipTier }),
+  });
 }
 
 export async function fetchCloudProgress() {
