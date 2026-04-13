@@ -1,6 +1,6 @@
 export interface CloudUser {
   id: number;
-  provider: 'guest' | 'google' | 'email';
+  provider: 'guest' | 'google' | 'email' | 'nickname';
   displayName: string;
   email: string | null;
   avatarUrl: string | null;
@@ -125,6 +125,22 @@ export async function signInGoogle(idToken: string) {
   const payload = await apiRequest<{ user: CloudUser }>('/api/auth/google', {
     method: 'POST',
     body: JSON.stringify({ idToken }),
+  });
+  return payload.user;
+}
+
+export async function signUpNickname(params: { nickname: string; password: string }) {
+  const payload = await apiRequest<{ user: CloudUser }>('/api/auth/nickname/register', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+  return payload.user;
+}
+
+export async function signInNickname(params: { nickname: string; password: string }) {
+  const payload = await apiRequest<{ user: CloudUser }>('/api/auth/nickname/login', {
+    method: 'POST',
+    body: JSON.stringify(params),
   });
   return payload.user;
 }

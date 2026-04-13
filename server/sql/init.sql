@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS users (
   provider TEXT NOT NULL,
   google_sub TEXT UNIQUE,
   email TEXT,
+  login_name TEXT,
   display_name TEXT NOT NULL,
   avatar_url TEXT,
   membership_tier TEXT NOT NULL DEFAULT 'basic',
@@ -16,6 +17,9 @@ ALTER TABLE users
 
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS login_name TEXT;
 
 DO $$
 DECLARE
@@ -54,7 +58,7 @@ END $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
     SELECT 1
     FROM pg_constraint con
     JOIN pg_class rel ON rel.oid = con.conrelid
@@ -63,14 +67,20 @@ BEGIN
       AND nsp.nspname = current_schema()
       AND con.conname = 'users_provider_check'
   ) THEN
-    ALTER TABLE users
-      ADD CONSTRAINT users_provider_check CHECK (provider IN ('guest', 'google', 'email'));
+    ALTER TABLE users DROP CONSTRAINT users_provider_check;
   END IF;
+
+  ALTER TABLE users
+    ADD CONSTRAINT users_provider_check CHECK (provider IN ('guest', 'google', 'email', 'nickname'));
 END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_ci
   ON users ((lower(email)))
   WHERE email IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_login_name_unique_ci
+  ON users ((lower(login_name)))
+  WHERE login_name IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,

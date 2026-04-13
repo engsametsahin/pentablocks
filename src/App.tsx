@@ -11,7 +11,7 @@ import { solveKatamino } from './solver';
 import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
 import { configureAdSensePreference, initializeAdSense } from './lib/adsense';
-import { bulkUpdateAdminMembership, fetchAdminUsers, fetchCloudProgress, fetchCurrentUser, resendEmailVerification, saveCloudProgress, signInGoogle, signInGuest, signOutCloud, updateAdminMembership, updateGuestNickname, verifyEmailConfirmation, type AdminCloudUser, type CloudUser } from './lib/cloud';
+import { bulkUpdateAdminMembership, fetchAdminUsers, fetchCloudProgress, fetchCurrentUser, resendEmailVerification, saveCloudProgress, signInGoogle, signInGuest, signInNickname, signOutCloud, signUpNickname, updateAdminMembership, updateGuestNickname, verifyEmailConfirmation, type AdminCloudUser, type CloudUser } from './lib/cloud';
 import { mountGoogleLoginButton } from './lib/googleIdentity';
 import { playSoundCue, unlockAudio } from './lib/sound';
 import {
@@ -454,11 +454,15 @@ function authErrorToMessage(error: unknown) {
     request_timeout: 'Cloud request timed out. Please try again.',
     auth_bootstrap_timeout: 'Session check took too long. You can sign in manually.',
     invalid_email: 'Please enter a valid email address.',
+    invalid_nickname: 'Nickname must be at least 3 characters and use letters or numbers.',
     password_too_short: 'Password must be at least 8 characters.',
     email_already_registered: 'This email is already registered. Please sign in.',
-    invalid_credentials: 'Invalid email or password.',
+    nickname_already_registered: 'This nickname is already taken. Please choose another one.',
+    invalid_credentials: 'Invalid nickname or password.',
     google_auth_not_configured: 'Google login is not configured yet.',
     guest_auth_failed: 'Guest sign-in failed. Try again.',
+    nickname_register_failed: 'Nickname profile creation failed. Please try again.',
+    nickname_login_failed: 'Nickname sign-in failed. Please try again.',
     email_register_failed: 'Email registration failed. Try again.',
     email_login_failed: 'Email sign-in failed. Try again.',
     email_verification_failed: 'Email confirmation could not be completed.',
@@ -1718,6 +1722,7 @@ function AccountPanel({
   googleEnabled,
   googleSlotRef,
   onGuestLogin,
+  onNicknameLogin,
   onNicknameRegister,
   onLogout,
 }: {
@@ -1727,14 +1732,32 @@ function AccountPanel({
   syncStateLabel: string;
   googleEnabled: boolean;
   googleSlotRef: React.RefObject<HTMLDivElement | null>;
-  onGuestLogin: () => Promise<boolean>;
-  onNicknameRegister: (nickname: string) => void;
+  onGuestLogin: (nickname?: string) => Promise<boolean>;
+  onNicknameLogin: (params: { nickname: string; password: string }) => void;
+  onNicknameRegister: (nickname: string, password: string) => void;
   onLogout: () => void;
 }) {
+  const [guestNickname, setGuestNickname] = useState('');
   const [nickname, setNickname] = useState('');
+  const [password, setPassword] = useState('');
+  const [nicknameMode, setNicknameMode] = useState<'signin' | 'register'>('register');
+  const normalizedNicknamePreview = nickname
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 24);
+  const nicknameLooksValid = normalizedNicknamePreview.length >= 3;
+  const passwordLooksValid = password.length >= 8;
+
   const submitAccount = () => {
     const trimmedNickname = nickname.trim();
-    onNicknameRegister(trimmedNickname || 'Guest');
+    if (nicknameMode === 'signin') {
+      onNicknameLogin({ nickname: trimmedNickname, password });
+      return;
+    }
+    onNicknameRegister(trimmedNickname, password);
   };
 
   return (
@@ -1747,7 +1770,13 @@ function AccountPanel({
             <p className="text-sm text-gray-600 mb-1">Signed in as</p>
             <p className="text-base font-black text-black">{user.displayName}</p>
             <p className="text-xs text-gray-500 mb-3">
-              {user.provider === 'google' ? 'Google account' : user.provider === 'email' ? 'Email account' : 'Guest cloud account'}
+              {user.provider === 'google'
+                ? 'Google account'
+                : user.provider === 'nickname'
+                  ? 'Nickname account'
+                  : user.provider === 'email'
+                    ? 'Email account'
+                    : 'Guest cloud account'}
             </p>
             <p className="text-xs text-emerald-700 font-bold mb-3">{syncStateLabel}</p>
             <button
@@ -1766,15 +1795,39 @@ function AccountPanel({
               Sign in to keep levels and stats across devices.
             </p>
             <button
-              onClick={() => void onGuestLogin()}
+              onClick={() => void onGuestLogin(guestNickname.trim() || undefined)}
               className="w-full py-2.5 rounded-xl bg-black text-white text-sm font-bold hover:bg-gray-800 transition-all mb-2"
             >
               Continue as Guest
             </button>
+            <input
+              type="text"
+              value={guestNickname}
+              onChange={(e) => setGuestNickname(e.target.value)}
+              placeholder="Optional nickname for guest"
+              className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+            />
             <div className="mt-2 border border-black/10 rounded-2xl p-3 bg-gray-50/60">
-              <p className="text-[10px] uppercase tracking-[0.18em] text-gray-400 font-bold mb-2">
-                Create Cloud Nickname
-              </p>
+              <div className="flex gap-2 mb-2">
+                <button
+                  onClick={() => setNicknameMode('register')}
+                  className={cn(
+                    'flex-1 text-xs font-bold rounded-lg py-1.5',
+                    nicknameMode === 'register' ? 'bg-black text-white' : 'bg-white text-gray-600 border border-black/10',
+                  )}
+                >
+                  Create Nickname
+                </button>
+                <button
+                  onClick={() => setNicknameMode('signin')}
+                  className={cn(
+                    'flex-1 text-xs font-bold rounded-lg py-1.5',
+                    nicknameMode === 'signin' ? 'bg-black text-white' : 'bg-white text-gray-600 border border-black/10',
+                  )}
+                >
+                  Sign In
+                </button>
+              </div>
               <input
                 type="text"
                 value={nickname}
@@ -1782,11 +1835,34 @@ function AccountPanel({
                 placeholder="Choose a nickname"
                 className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
               />
+              <div className="mb-2 rounded-lg border border-black/5 bg-white/70 px-3 py-2 text-[11px] text-gray-600">
+                <p className={cn('font-semibold', nicknameLooksValid ? 'text-emerald-700' : 'text-amber-700')}>
+                  Rules: at least 3 chars, letters/numbers, and `.` `_` `-` allowed.
+                </p>
+                <p className="mt-1">
+                  Saved as:
+                  {' '}
+                  <span className="font-bold text-black">{normalizedNicknamePreview || 'nickname-preview'}</span>
+                </p>
+              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password (min 8 chars)"
+                className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+              />
+              {nicknameMode === 'register' && (
+                <p className={cn('mb-2 text-[11px] font-semibold', passwordLooksValid ? 'text-emerald-700' : 'text-amber-700')}>
+                  Password must be at least 8 characters.
+                </p>
+              )}
               <button
                 onClick={submitAccount}
-                className="w-full py-2 rounded-lg bg-black text-white text-xs font-bold hover:bg-gray-800 transition-all"
+                disabled={!nicknameLooksValid || !passwordLooksValid}
+                className="w-full py-2 rounded-lg bg-black text-white text-xs font-bold hover:bg-gray-800 transition-all disabled:opacity-40 disabled:hover:bg-black"
               >
-                Create Cloud Profile
+                {nicknameMode === 'signin' ? 'Sign In' : 'Create Profile'}
               </button>
             </div>
             {googleEnabled ? (
@@ -1910,6 +1986,7 @@ function ProfileScreen({
   resolvedTheme,
   onThemeChange,
   onGuestLogin,
+  onNicknameLogin,
   onNicknameRegister,
   onLogout,
   onBack,
@@ -1925,8 +2002,9 @@ function ProfileScreen({
   themeMode: ThemeMode;
   resolvedTheme: 'dark' | 'light';
   onThemeChange: (mode: ThemeMode) => void;
-  onGuestLogin: () => Promise<boolean>;
-  onNicknameRegister: (nickname: string) => void;
+  onGuestLogin: (nickname?: string) => Promise<boolean>;
+  onNicknameLogin: (params: { nickname: string; password: string }) => void;
+  onNicknameRegister: (nickname: string, password: string) => void;
   onLogout: () => void;
   onBack: () => void;
   onResendVerification: () => void;
@@ -1981,6 +2059,7 @@ function ProfileScreen({
           googleEnabled={googleEnabled}
           googleSlotRef={googleSlotRef}
           onGuestLogin={onGuestLogin}
+          onNicknameLogin={onNicknameLogin}
           onNicknameRegister={onNicknameRegister}
           onLogout={onLogout}
         />
@@ -2610,11 +2689,11 @@ export default function App() {
     setCloudReady(true);
   }, [applyMergedProgress]);
 
-  const handleGuestLogin = useCallback(async () => {
+  const handleGuestLogin = useCallback(async (nickname?: string) => {
     try {
       setAuthError(null);
       setAuthLoading(true);
-      const user = await signInGuest();
+      const user = await signInGuest(nickname);
       setAuthUser(user);
       await hydrateCloudForUser();
       showToast('Cloud guest profile connected.', 'success');
@@ -2649,15 +2728,31 @@ export default function App() {
     }
   }, [hydrateCloudForUser, showToast]);
 
-  const handleNicknameRegister = useCallback(async (nickname: string) => {
+  const handleNicknameRegister = useCallback(async (nickname: string, password: string) => {
     try {
       setAuthError(null);
       setAuthLoading(true);
-      const user = await signInGuest(nickname);
+      const user = await signUpNickname({ nickname, password });
       setAuthUser(user);
       await hydrateCloudForUser();
-      showToast('Cloud profile created with nickname.', 'success');
-      trackEvent('auth_login', { provider: 'guest_nickname' });
+      showToast('Profile created with nickname.', 'success');
+      trackEvent('auth_login', { provider: 'nickname_register' });
+    } catch (error) {
+      setAuthError(authErrorToMessage(error));
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [hydrateCloudForUser, showToast]);
+
+  const handleNicknameLogin = useCallback(async (params: { nickname: string; password: string }) => {
+    try {
+      setAuthError(null);
+      setAuthLoading(true);
+      const user = await signInNickname(params);
+      setAuthUser(user);
+      await hydrateCloudForUser();
+      showToast('Nickname profile connected.', 'success');
+      trackEvent('auth_login', { provider: 'nickname' });
     } catch (error) {
       setAuthError(authErrorToMessage(error));
     } finally {
@@ -4300,6 +4395,7 @@ export default function App() {
           resolvedTheme={resolvedTheme}
           onThemeChange={setThemeMode}
           onGuestLogin={handleGuestLogin}
+          onNicknameLogin={handleNicknameLogin}
           onNicknameRegister={handleNicknameRegister}
           onLogout={handleLogout}
           onBack={() => setScreen('menu')}

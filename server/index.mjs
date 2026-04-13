@@ -163,6 +163,18 @@ function normalizeEmail(input) {
   return value;
 }
 
+function normalizeLoginName(input) {
+  if (typeof input !== 'string') return null;
+  const value = input
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/^[._-]+|[._-]+$/g, '');
+  if (value.length < 3) return null;
+  return value.slice(0, 24);
+}
+
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -1059,6 +1071,98 @@ app.post('/api/auth/google', async (req, res) => {
   } catch (error) {
     console.error('google auth error', error);
     res.status(401).json({ error: 'google_auth_failed' });
+  }
+});
+
+app.post('/api/auth/nickname/register', async (req, res) => {
+  const loginName = normalizeLoginName(req.body?.nickname);
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const displayName = normalizeDisplayName(req.body?.nickname, 'Player');
+
+  if (!loginName) {
+    res.status(400).json({ error: 'invalid_nickname' });
+    return;
+  }
+  if (password.length < 8) {
+    res.status(400).json({ error: 'password_too_short' });
+    return;
+  }
+
+  const existing = await pool.query(
+    `SELECT id FROM users WHERE lower(login_name) = lower($1) LIMIT 1`,
+    [loginName],
+  );
+  if (existing.rows.length > 0) {
+    res.status(409).json({ error: 'nickname_already_registered' });
+    return;
+  }
+
+  const { salt, hash } = createPasswordDigest(password);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const createdUser = await client.query(
+      `INSERT INTO users (provider, login_name, display_name)
+       VALUES ('nickname', $1, $2)
+       RETURNING *`,
+      [loginName, displayName],
+    );
+    const user = createdUser.rows[0];
+    await client.query(
+      `INSERT INTO user_credentials (user_id, password_hash, password_salt)
+       VALUES ($1, $2, $3)`,
+      [user.id, hash, salt],
+    );
+    await client.query('COMMIT');
+
+    const token = await createSession(user.id);
+    setSessionCookie(res, token);
+    res.status(201).json({ user: toUserDto(user) });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('nickname register error', error);
+    res.status(500).json({ error: 'nickname_register_failed' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/auth/nickname/login', async (req, res) => {
+  const loginName = normalizeLoginName(req.body?.nickname);
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+  if (!loginName || !password) {
+    res.status(400).json({ error: 'invalid_credentials' });
+    return;
+  }
+
+  try {
+    const userQuery = await pool.query(
+      `SELECT u.*, c.password_hash, c.password_salt
+       FROM users u
+       JOIN user_credentials c ON c.user_id = u.id
+       WHERE lower(u.login_name) = lower($1) AND u.provider = 'nickname'
+       LIMIT 1`,
+      [loginName],
+    );
+    if (userQuery.rows.length === 0) {
+      res.status(401).json({ error: 'invalid_credentials' });
+      return;
+    }
+
+    const row = userQuery.rows[0];
+    if (!verifyPassword(password, row.password_salt, row.password_hash)) {
+      res.status(401).json({ error: 'invalid_credentials' });
+      return;
+    }
+
+    const token = await createSession(row.id);
+    setSessionCookie(res, token);
+    res.json({ user: toUserDto(row) });
+  } catch (error) {
+    console.error('nickname login error', error);
+    res.status(500).json({ error: 'nickname_login_failed' });
   }
 });
 
