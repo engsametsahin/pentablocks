@@ -3841,8 +3841,12 @@ export default function App() {
           {/* Board */}
           <div
             ref={containerRef}
-            className={cn('relative z-20 p-8 rounded-[40px] shadow-2xl border overflow-visible', resolvedTheme === 'dark' ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/5')}
-            style={{ width: gridWidth * cellSize + gridPadding * 2, height: gridHeight * cellSize + gridPadding * 2 }}
+            className={cn('relative z-20 rounded-[40px] shadow-2xl border overflow-visible', resolvedTheme === 'dark' ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/5')}
+            style={{
+              width: gridWidth * cellSize + gridPadding * 2,
+              height: gridHeight * cellSize + gridPadding * 2,
+              padding: gridPadding,
+            }}
           >
             {/* Grid Background */}
             <div
@@ -3883,8 +3887,7 @@ export default function App() {
                     className={cn(
                       'absolute z-20 touch-none pointer-events-auto',
                       isWin ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
-                      !isWin && selectedPieceId === piece.id && 'z-30 ring-2 ring-offset-4 rounded-sm',
-                      !isWin && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
+                      !isWin && selectedPieceId === piece.id && 'z-30',
                     )}
                     style={{
                       left: piece.position.x * cellSize + gridPadding,
