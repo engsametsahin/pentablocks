@@ -1050,7 +1050,7 @@ app.post('/api/auth/google', async (req, res) => {
 
     const upsert = await pool.query(
       `INSERT INTO users (provider, google_sub, email, display_name, avatar_url, email_verified_at)
-       VALUES ('google', $1, $2, $3, $4, CASE WHEN $2 IS NOT NULL THEN NOW() ELSE NULL END)
+       VALUES ('google', $1, $2, $3, $4, CASE WHEN $2::text IS NOT NULL THEN NOW() ELSE NULL END)
        ON CONFLICT (google_sub) DO UPDATE SET
          email = EXCLUDED.email,
          display_name = EXCLUDED.display_name,
