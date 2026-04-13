@@ -356,6 +356,26 @@ function getBoardDimensions(cfg: Pick<LevelConfig, 'width' | 'height'>) {
     : { width: cfg.height, height: cfg.width };
 }
 
+function orientShapeForStash(shape: Point[]) {
+  let best = shape;
+  let current = shape;
+
+  for (let i = 0; i < 4; i += 1) {
+    const currentSize = getShapeSize(current);
+    const bestSize = getShapeSize(best);
+    const isBetter =
+      currentSize.width > bestSize.width
+      || (currentSize.width === bestSize.width && currentSize.height < bestSize.height);
+
+    if (isBetter) {
+      best = current;
+    }
+    current = rotateShape(current);
+  }
+
+  return best;
+}
+
 function generateChallengePieces(seed: string, cfg: LevelConfig) {
   const board = getBoardDimensions(cfg);
   const rng = createSeededRng(`${seed}:${cfg.id}`);
@@ -2735,7 +2755,12 @@ export default function App() {
       }
     }
 
-    setAvailablePieces(solvablePieces);
+    setAvailablePieces(
+      solvablePieces.map((piece) => ({
+        ...piece,
+        shape: orientShapeForStash(piece.shape),
+      })),
+    );
     setIsGenerating(false);
   }, [level, updatePlayerStats]);
 
@@ -3003,7 +3028,15 @@ export default function App() {
       // Use currentShape so rotation/flip is preserved when returning to stash
       setAvailablePieces((ap) => {
         if (ap.some((p) => p.id === id)) return ap;
-        return [...ap, { id: piece.id, name: piece.name, shape: piece.currentShape, color: piece.color }];
+        return [
+          ...ap,
+          {
+            id: piece.id,
+            name: piece.name,
+            shape: orientShapeForStash(piece.currentShape),
+            color: piece.color,
+          },
+        ];
       });
       return prev.filter((p) => p.id !== id);
     });
@@ -3016,7 +3049,11 @@ export default function App() {
 
     const restoredPieces = allIds
       .map((id) => PIECE_BY_ID[id])
-      .filter((piece): piece is Piece => Boolean(piece));
+      .filter((piece): piece is Piece => Boolean(piece))
+      .map((piece) => ({
+        ...piece,
+        shape: orientShapeForStash(piece.shape),
+      }));
 
     setPlacedPieces([]);
     setAvailablePieces(restoredPieces);
@@ -3932,93 +3969,35 @@ export default function App() {
                   )}>Click or drag to start!</p>
                 )}
               </div>
-              <div className="md:hidden overflow-x-auto pb-1">
-                <div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-4 px-2 w-max min-w-full justify-center">
-                  {stashRenderOrder.map((pieceId) => {
-                    const piece = availableById.get(pieceId);
-                    const footprint = PIECE_MAX_FOOTPRINT[pieceId] ?? { width: 1, height: 1 };
-                    const slotWidth = footprint.width * cellSize;
-                    const slotHeight = footprint.height * cellSize;
-                    const shapeSize = piece ? getShapeSize(piece.shape) : { width: 1, height: 1 };
-                    const offsetX = piece ? Math.max(0, Math.floor((slotWidth - shapeSize.width * cellSize) / 2)) : 0;
-                    const offsetY = piece ? Math.max(0, Math.floor((slotHeight - shapeSize.height * cellSize) / 2)) : 0;
-                    return (
-                      <div
-                        key={`m-${pieceId}`}
-                        className={cn(
-                          'relative rounded-2xl touch-none',
-                          piece ? 'cursor-grab' : 'opacity-35',
-                          resolvedTheme === 'dark' ? 'bg-white/[0.03]' : 'bg-black/[0.03]',
-                          piece && selectedPieceId === piece.id && 'ring-2 ring-offset-2',
-                          piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
-                        )}
-                        style={{ width: slotWidth, height: slotHeight }}
-                        onPointerDown={piece ? (e) => onPiecePointerDown(e, piece.id, false) : undefined}
-                      >
-                        {piece ? piece.shape.map((cell, i) => (
-                          <div
-                            key={`${piece.id}-m-${i}`}
-                            style={blockCellStyle(
-                              piece.color,
-                              cellSize,
-                              offsetX + cell.x * cellSize,
-                              offsetY + cell.y * cellSize,
-                            )}
-                          />
-                        )) : (
-                          <div
-                            className={cn(
-                              'pointer-events-none absolute inset-0 rounded-lg border-2 border-dashed',
-                              resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/10',
-                            )}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="hidden md:flex flex-wrap justify-center gap-6 px-2">
+              <div className="flex flex-wrap items-end justify-center gap-x-4 gap-y-3 px-2">
                 {stashRenderOrder.map((pieceId) => {
                   const piece = availableById.get(pieceId);
-                  const footprint = PIECE_MAX_FOOTPRINT[pieceId] ?? { width: 1, height: 1 };
-                  const slotWidth = footprint.width * cellSize;
-                  const slotHeight = footprint.height * cellSize;
-                  const shapeSize = piece ? getShapeSize(piece.shape) : { width: 1, height: 1 };
-                  const offsetX = piece ? Math.max(0, Math.floor((slotWidth - shapeSize.width * cellSize) / 2)) : 0;
-                  const offsetY = piece ? Math.max(0, Math.floor((slotHeight - shapeSize.height * cellSize) / 2)) : 0;
+                  if (!piece) return null;
+                  const shapeSize = getShapeSize(piece.shape);
+                  const wrapperPadding = Math.max(4, Math.round(cellSize * 0.16));
+                  const wrapperWidth = shapeSize.width * cellSize + wrapperPadding * 2;
+                  const wrapperHeight = shapeSize.height * cellSize + wrapperPadding * 2;
                   return (
                     <div
-                      key={`d-${pieceId}`}
+                      key={`stash-${pieceId}`}
                       className={cn(
-                        'relative rounded-2xl touch-none',
-                        piece ? 'cursor-grab transition-all hover:scale-105' : 'opacity-35',
-                        resolvedTheme === 'dark' ? 'bg-white/[0.03]' : 'bg-black/[0.03]',
-                        piece && selectedPieceId === piece.id && 'ring-2 ring-offset-4',
-                        piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
+                        'relative touch-none',
+                        'cursor-grab transition-all hover:scale-[1.03] active:scale-[0.99]',
                       )}
-                      style={{ width: slotWidth, height: slotHeight }}
-                      onPointerDown={piece ? (e) => onPiecePointerDown(e, piece.id, false) : undefined}
+                      style={{ width: wrapperWidth, height: wrapperHeight }}
+                      onPointerDown={(e) => onPiecePointerDown(e, piece.id, false)}
                     >
-                      {piece ? piece.shape.map((cell, i) => (
+                      {piece.shape.map((cell, i) => (
                         <div
-                          key={`${piece.id}-d-${i}`}
+                          key={`${piece.id}-stash-${i}`}
                           style={blockCellStyle(
                             piece.color,
                             cellSize,
-                            offsetX + cell.x * cellSize,
-                            offsetY + cell.y * cellSize,
+                            wrapperPadding + cell.x * cellSize,
+                            wrapperPadding + cell.y * cellSize,
                           )}
                         />
-                      )) : (
-                        <div
-                          className={cn(
-                            'pointer-events-none absolute inset-0 rounded-lg border-2 border-dashed',
-                            resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/10',
-                          )}
-                        />
-                      )}
+                      ))}
                     </div>
                   );
                 })}
