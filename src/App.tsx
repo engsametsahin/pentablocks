@@ -343,7 +343,14 @@ function shuffleWithRng<T>(items: T[], rng: () => number) {
   return out;
 }
 
+function getBoardDimensions(cfg: Pick<LevelConfig, 'width' | 'height'>) {
+  return cfg.width >= cfg.height
+    ? { width: cfg.width, height: cfg.height }
+    : { width: cfg.height, height: cfg.width };
+}
+
 function generateChallengePieces(seed: string, cfg: LevelConfig) {
+  const board = getBoardDimensions(cfg);
   const rng = createSeededRng(`${seed}:${cfg.id}`);
   const p4 = ALL_PIECES.filter((p) => p.shape.length === 4);
   const p3 = ALL_PIECES.filter((p) => p.shape.length === 3);
@@ -359,7 +366,7 @@ function generateChallengePieces(seed: string, cfg: LevelConfig) {
 
   for (let attempts = 0; attempts < 220; attempts += 1) {
     const candidate = pickCandidates();
-    if (solveKatamino(cfg.width, cfg.height, candidate)) return candidate;
+    if (solveKatamino(board.width, board.height, candidate)) return candidate;
   }
 
   return pickCandidates();
@@ -1903,8 +1910,9 @@ export default function App() {
   const touchTrackRef = pointerTrackRef;
 
   const config = LEVEL_CONFIGS[level - 1];
-  const gridWidth = config.width;
-  const gridHeight = config.height;
+  const boardDimensions = getBoardDimensions(config);
+  const gridWidth = boardDimensions.width;
+  const gridHeight = boardDimensions.height;
   const targetCells = gridWidth * gridHeight;
   const totalPiecesCount = config.p4 + config.p3 + config.p2 + config.p1;
   const isMultiplayerRound = gameMode === 'multiplayer' && activeChallenge !== null;
@@ -2660,7 +2668,7 @@ export default function App() {
     trackEvent('level_start', {
       level: levelToSet,
       reason,
-      board: `${cfg.width}x${cfg.height}`,
+      board: `${getBoardDimensions(cfg).width}x${getBoardDimensions(cfg).height}`,
       time_limit: cfg.timeSeconds,
       mode,
     });
@@ -2679,8 +2687,9 @@ export default function App() {
       const p2 = ALL_PIECES.filter(p => p.shape.length === 2);
       const p1 = ALL_PIECES.filter(p => p.shape.length === 1);
 
-      const currentWidth = cfg.width;
-      const currentHeight = cfg.height;
+      const board = getBoardDimensions(cfg);
+      const currentWidth = board.width;
+      const currentHeight = board.height;
 
       const pickCandidates = () => [
         ...[...p4].sort(() => Math.random() - 0.5).slice(0, cfg.p4),
@@ -3880,12 +3889,12 @@ export default function App() {
           {stashRenderOrder.length > 0 && (
             <div
               className={cn(
-                'mt-4 md:mt-6 w-full rounded-[32px] border shadow-xl px-4 py-4 md:px-6 md:py-5',
+                'mt-2 md:mt-3 w-full rounded-[32px] border shadow-xl px-4 py-3 md:px-6 md:py-4',
                 resolvedTheme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-white border-black/5',
               )}
             >
               {/* Fixed-height wrapper so the hint disappearing doesn't shift pieces */}
-              <div className="h-8 mb-2 flex items-center justify-center">
+              <div className="h-6 mb-1 flex items-center justify-center">
                 {!isActive && !isGameOver && !isWin && (
                   <p className={cn(
                     'text-center text-[10px] font-bold px-3 py-1 rounded-full animate-pulse',
