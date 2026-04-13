@@ -3824,7 +3824,7 @@ export default function App() {
           {/* Board */}
           <div
             ref={containerRef}
-            className={cn('relative p-8 rounded-[40px] shadow-2xl border overflow-visible', resolvedTheme === 'dark' ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/5')}
+            className={cn('relative z-20 p-8 rounded-[40px] shadow-2xl border overflow-visible', resolvedTheme === 'dark' ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/5')}
             style={{ width: gridWidth * CELL_SIZE + 64, height: gridHeight * CELL_SIZE + 64 }}
           >
             {/* Grid Background */}
@@ -3899,7 +3899,7 @@ export default function App() {
           {stashRenderOrder.length > 0 && (
             <div
               className={cn(
-                'mt-2 md:mt-3 w-full rounded-[32px] border shadow-xl px-4 py-3 md:px-6 md:py-4',
+                'relative z-0 mt-2 md:mt-3 w-full rounded-[32px] border shadow-xl px-4 py-3 md:px-6 md:py-4',
                 resolvedTheme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-white border-black/5',
               )}
             >
@@ -3948,7 +3948,7 @@ export default function App() {
                         )) : (
                           <div
                             className={cn(
-                              'absolute inset-0 rounded-lg border-2 border-dashed',
+                              'pointer-events-none absolute inset-0 rounded-lg border-2 border-dashed',
                               resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/10',
                             )}
                           />
@@ -3994,7 +3994,7 @@ export default function App() {
                       )) : (
                         <div
                           className={cn(
-                            'absolute inset-0 rounded-lg border-2 border-dashed',
+                            'pointer-events-none absolute inset-0 rounded-lg border-2 border-dashed',
                             resolvedTheme === 'dark' ? 'border-white/10' : 'border-black/10',
                           )}
                         />
