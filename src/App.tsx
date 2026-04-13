@@ -1741,6 +1741,7 @@ function AccountPanel({
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
   const [nicknameMode, setNicknameMode] = useState<'signin' | 'register'>('register');
+  const [nicknameSubmitAttempted, setNicknameSubmitAttempted] = useState(false);
   const normalizedNicknamePreview = nickname
     .trim()
     .toLowerCase()
@@ -1752,7 +1753,11 @@ function AccountPanel({
   const passwordLooksValid = password.length >= 8;
 
   const submitAccount = () => {
+    setNicknameSubmitAttempted(true);
     const trimmedNickname = nickname.trim();
+    if (!nicknameLooksValid || !passwordLooksValid) {
+      return;
+    }
     if (nicknameMode === 'signin') {
       onNicknameLogin({ nickname: trimmedNickname, password });
       return;
@@ -1810,7 +1815,10 @@ function AccountPanel({
             <div className="mt-2 border border-black/10 rounded-2xl p-3 bg-gray-50/60">
               <div className="flex gap-2 mb-2">
                 <button
-                  onClick={() => setNicknameMode('register')}
+                  onClick={() => {
+                    setNicknameMode('register');
+                    setNicknameSubmitAttempted(false);
+                  }}
                   className={cn(
                     'flex-1 text-xs font-bold rounded-lg py-1.5',
                     nicknameMode === 'register' ? 'bg-black text-white' : 'bg-white text-gray-600 border border-black/10',
@@ -1819,7 +1827,10 @@ function AccountPanel({
                   Create Nickname
                 </button>
                 <button
-                  onClick={() => setNicknameMode('signin')}
+                  onClick={() => {
+                    setNicknameMode('signin');
+                    setNicknameSubmitAttempted(false);
+                  }}
                   className={cn(
                     'flex-1 text-xs font-bold rounded-lg py-1.5',
                     nicknameMode === 'signin' ? 'bg-black text-white' : 'bg-white text-gray-600 border border-black/10',
@@ -1831,36 +1842,43 @@ function AccountPanel({
               <input
                 type="text"
                 value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
+                onChange={(e) => {
+                  setNickname(e.target.value);
+                  if (nicknameSubmitAttempted) setNicknameSubmitAttempted(false);
+                }}
                 placeholder="Choose a nickname"
                 className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
               />
-              <div className="mb-2 rounded-lg border border-black/5 bg-white/70 px-3 py-2 text-[11px] text-gray-600">
-                <p className={cn('font-semibold', nicknameLooksValid ? 'text-emerald-700' : 'text-amber-700')}>
-                  Rules: at least 3 chars, letters/numbers, and `.` `_` `-` allowed.
-                </p>
+              {(nicknameSubmitAttempted || nickname.trim().length > 0) && normalizedNicknamePreview && (
                 <p className="mt-1">
                   Saved as:
                   {' '}
                   <span className="font-bold text-black">{normalizedNicknamePreview || 'nickname-preview'}</span>
                 </p>
-              </div>
+              )}
+              {nicknameSubmitAttempted && !nicknameLooksValid && (
+                <p className="mb-2 text-[11px] font-semibold text-amber-700">
+                  Rules: at least 3 chars, letters/numbers, and `.` `_` `-` allowed.
+                </p>
+              )}
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (nicknameSubmitAttempted) setNicknameSubmitAttempted(false);
+                }}
                 placeholder="Password (min 8 chars)"
                 className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
               />
-              {nicknameMode === 'register' && (
-                <p className={cn('mb-2 text-[11px] font-semibold', passwordLooksValid ? 'text-emerald-700' : 'text-amber-700')}>
+              {nicknameMode === 'register' && nicknameSubmitAttempted && !passwordLooksValid && (
+                <p className="mb-2 text-[11px] font-semibold text-amber-700">
                   Password must be at least 8 characters.
                 </p>
               )}
               <button
                 onClick={submitAccount}
-                disabled={!nicknameLooksValid || !passwordLooksValid}
-                className="w-full py-2 rounded-lg bg-black text-white text-xs font-bold hover:bg-gray-800 transition-all disabled:opacity-40 disabled:hover:bg-black"
+                className="w-full py-2 rounded-lg bg-black text-white text-xs font-bold hover:bg-gray-800 transition-all"
               >
                 {nicknameMode === 'signin' ? 'Sign In' : 'Create Profile'}
               </button>
@@ -1954,7 +1972,7 @@ function CornerAccountNav({
             resolvedTheme === 'dark' ? 'text-white hover:text-emerald-300' : 'text-black hover:text-emerald-600',
           )}
         >
-          Profile
+          {user ? 'Profile' : 'Sign In / Create Account'}
         </button>
         {user && (
           <>
