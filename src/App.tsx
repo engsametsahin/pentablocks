@@ -1882,7 +1882,6 @@ export default function App() {
 
   const gameSurfaceRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const stashZoneRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{
     x: number;
     y: number;
@@ -3074,12 +3073,7 @@ export default function App() {
 
     const minLeft = margin;
     const maxLeft = Math.max(minLeft, window.innerWidth - pieceWidth - margin);
-    let maxTop = Math.max(margin, window.innerHeight - pieceHeight - margin);
-
-    const stashRect = stashZoneRef.current?.getBoundingClientRect();
-    if (stashRect) {
-      maxTop = Math.min(maxTop, Math.max(margin, stashRect.top - pieceHeight - 12));
-    }
+    const maxTop = Math.max(margin, window.innerHeight - pieceHeight - margin);
 
     const left = Math.min(maxLeft, Math.max(minLeft, clientX - dragOffsetRef.current.x));
     const top = Math.min(maxTop, Math.max(margin, clientY - dragOffsetRef.current.y));
@@ -3881,7 +3875,6 @@ export default function App() {
           {/* Stash — keep slots fixed so other pieces don't jump around on mobile */}
           {stashRenderOrder.length > 0 && (
             <div
-              ref={stashZoneRef}
               className={cn(
                 'mt-4 md:mt-6 w-full rounded-[32px] border shadow-xl px-4 py-4 md:px-6 md:py-5',
                 resolvedTheme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-white border-black/5',
