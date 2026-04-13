@@ -3858,30 +3858,40 @@ export default function App() {
 
             {/* Placed Pieces */}
             {placedPieces.map((piece) => (
-              <div
-                key={piece.id}
-                className={cn(
-                  'absolute touch-none',
-                  isWin ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
-                  !isWin && selectedPieceId === piece.id && 'z-10 ring-2 ring-offset-4 rounded-sm',
-                  !isWin && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
-                )}
-                style={{ left: piece.position.x * CELL_SIZE + GRID_PADDING, top: piece.position.y * CELL_SIZE + GRID_PADDING, width: 0, height: 0 }}
-                onPointerDown={(e) => onPiecePointerDown(e, piece.id, true)}
-              >
-                {piece.currentShape.map((cell, i) => (
+              (() => {
+                const shapeSize = getShapeSize(piece.currentShape);
+                return (
                   <div
-                    key={i}
-                    style={blockCellStyle(
-                      piece.color,
-                      CELL_SIZE,
-                      cell.x * CELL_SIZE,
-                      cell.y * CELL_SIZE,
-                      draggedPiece?.id === piece.id && dragValid === false ? 0.6 : 1,
+                    key={piece.id}
+                    className={cn(
+                      'absolute z-20 touch-none pointer-events-auto',
+                      isWin ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
+                      !isWin && selectedPieceId === piece.id && 'z-30 ring-2 ring-offset-4 rounded-sm',
+                      !isWin && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                     )}
-                  />
-                ))}
-              </div>
+                    style={{
+                      left: piece.position.x * CELL_SIZE + GRID_PADDING,
+                      top: piece.position.y * CELL_SIZE + GRID_PADDING,
+                      width: shapeSize.width * CELL_SIZE,
+                      height: shapeSize.height * CELL_SIZE,
+                    }}
+                    onPointerDown={(e) => onPiecePointerDown(e, piece.id, true)}
+                  >
+                    {piece.currentShape.map((cell, i) => (
+                      <div
+                        key={i}
+                        style={blockCellStyle(
+                          piece.color,
+                          CELL_SIZE,
+                          cell.x * CELL_SIZE,
+                          cell.y * CELL_SIZE,
+                          draggedPiece?.id === piece.id && dragValid === false ? 0.6 : 1,
+                        )}
+                      />
+                    ))}
+                  </div>
+                );
+              })()
             ))}
           </div>
 
