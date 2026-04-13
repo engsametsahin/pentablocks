@@ -3956,7 +3956,7 @@ export default function App() {
             ))}
           </div>
 
-          {/* Stash — keep slots fixed so other pieces don't jump around on mobile */}
+          {/* Stash — keep slots fixed so other pieces don't jump around across layouts */}
           {stashRenderOrder.length > 0 && (
             <div
               className={cn(
