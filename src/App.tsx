@@ -11,7 +11,7 @@ import { solveKatamino } from './solver';
 import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
 import { configureAdSensePreference, initializeAdSense } from './lib/adsense';
-import { bulkUpdateAdminMembership, fetchAdminUsers, fetchCloudProgress, fetchCurrentUser, resendEmailVerification, saveCloudProgress, signInEmail, signInGoogle, signInGuest, signOutCloud, signUpEmail, updateAdminMembership, updateGuestNickname, verifyEmailConfirmation, type AdminCloudUser, type CloudUser } from './lib/cloud';
+import { bulkUpdateAdminMembership, fetchAdminUsers, fetchCloudProgress, fetchCurrentUser, resendEmailVerification, saveCloudProgress, signInGoogle, signInGuest, signOutCloud, updateAdminMembership, updateGuestNickname, verifyEmailConfirmation, type AdminCloudUser, type CloudUser } from './lib/cloud';
 import { mountGoogleLoginButton } from './lib/googleIdentity';
 import { playSoundCue, unlockAudio } from './lib/sound';
 import {
@@ -1731,8 +1731,7 @@ function AccountPanel({
   googleEnabled,
   googleSlotRef,
   onGuestLogin,
-  onEmailLogin,
-  onEmailRegister,
+  onNicknameRegister,
   onLogout,
 }: {
   user: CloudUser | null;
@@ -1742,27 +1741,13 @@ function AccountPanel({
   googleEnabled: boolean;
   googleSlotRef: React.RefObject<HTMLDivElement | null>;
   onGuestLogin: () => Promise<boolean>;
-  onEmailLogin: (params: { email: string; password: string }) => void;
-  onEmailRegister: (params: { email: string; password: string; displayName: string }) => void;
+  onNicknameRegister: (nickname: string) => void;
   onLogout: () => void;
 }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [emailMode, setEmailMode] = useState<'signin' | 'register'>('signin');
-
-  const submitEmail = () => {
-    const trimmedEmail = email.trim();
-    const trimmedName = displayName.trim();
-    if (emailMode === 'register') {
-      onEmailRegister({
-        email: trimmedEmail,
-        password,
-        displayName: trimmedName || 'Player',
-      });
-      return;
-    }
-    onEmailLogin({ email: trimmedEmail, password });
+  const [nickname, setNickname] = useState('');
+  const submitAccount = () => {
+    const trimmedNickname = nickname.trim();
+    onNicknameRegister(trimmedNickname || 'Guest');
   };
 
   return (
@@ -1800,55 +1785,21 @@ function AccountPanel({
               Continue as Guest
             </button>
             <div className="mt-2 border border-black/10 rounded-2xl p-3 bg-gray-50/60">
-              <div className="flex gap-2 mb-2">
-                <button
-                  onClick={() => setEmailMode('signin')}
-                  className={cn(
-                    'flex-1 text-xs font-bold rounded-lg py-1.5',
-                    emailMode === 'signin' ? 'bg-black text-white' : 'bg-white text-gray-600 border border-black/10',
-                  )}
-                >
-                  Email Sign In
-                </button>
-                <button
-                  onClick={() => setEmailMode('register')}
-                  className={cn(
-                    'flex-1 text-xs font-bold rounded-lg py-1.5',
-                    emailMode === 'register' ? 'bg-black text-white' : 'bg-white text-gray-600 border border-black/10',
-                  )}
-                >
-                  Create Account
-                </button>
-              </div>
-
-              {emailMode === 'register' && (
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Display name"
-                  className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
-                />
-              )}
+              <p className="text-[10px] uppercase tracking-[0.18em] text-gray-400 font-bold mb-2">
+                Create Cloud Nickname
+              </p>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Email"
-                className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
-              />
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Password (min 8 chars)"
+                type="text"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                placeholder="Choose a nickname"
                 className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
               />
               <button
-                onClick={submitEmail}
+                onClick={submitAccount}
                 className="w-full py-2 rounded-lg bg-black text-white text-xs font-bold hover:bg-gray-800 transition-all"
               >
-                {emailMode === 'register' ? 'Create with Email' : 'Sign In with Email'}
+                Create Cloud Profile
               </button>
             </div>
             {googleEnabled ? (
@@ -1909,8 +1860,7 @@ function ProfileScreen({
   resolvedTheme,
   onThemeChange,
   onGuestLogin,
-  onEmailLogin,
-  onEmailRegister,
+  onNicknameRegister,
   onLogout,
   onBack,
   onResendVerification,
@@ -1926,8 +1876,7 @@ function ProfileScreen({
   resolvedTheme: 'dark' | 'light';
   onThemeChange: (mode: ThemeMode) => void;
   onGuestLogin: () => Promise<boolean>;
-  onEmailLogin: (params: { email: string; password: string }) => void;
-  onEmailRegister: (params: { email: string; password: string; displayName: string }) => void;
+  onNicknameRegister: (nickname: string) => void;
   onLogout: () => void;
   onBack: () => void;
   onResendVerification: () => void;
@@ -1978,14 +1927,13 @@ function ProfileScreen({
             user={user}
             authLoading={authLoading}
             authError={authError}
-            syncStateLabel={syncStateLabel}
-            googleEnabled={googleEnabled}
-            googleSlotRef={googleSlotRef}
-            onGuestLogin={onGuestLogin}
-            onEmailLogin={onEmailLogin}
-            onEmailRegister={onEmailRegister}
-            onLogout={onLogout}
-          />
+          syncStateLabel={syncStateLabel}
+          googleEnabled={googleEnabled}
+          googleSlotRef={googleSlotRef}
+          onGuestLogin={onGuestLogin}
+          onNicknameRegister={onNicknameRegister}
+          onLogout={onLogout}
+        />
 
           <div className="flex flex-col gap-6">
             <ThemeSettingsCard
@@ -2651,31 +2599,15 @@ export default function App() {
     }
   }, [hydrateCloudForUser, showToast]);
 
-  const handleEmailRegister = useCallback(async (params: { email: string; password: string; displayName: string }) => {
+  const handleNicknameRegister = useCallback(async (nickname: string) => {
     try {
       setAuthError(null);
       setAuthLoading(true);
-      const payload = await signUpEmail(params);
-      setAuthUser(payload.user);
-      await hydrateCloudForUser();
-      showToast(payload.verificationEmailSent ? 'Account created. Please confirm your email.' : 'Email account created and synced.', 'success');
-      trackEvent('auth_login', { provider: 'email_register' });
-    } catch (error) {
-      setAuthError(authErrorToMessage(error));
-    } finally {
-      setAuthLoading(false);
-    }
-  }, [hydrateCloudForUser, showToast]);
-
-  const handleEmailLogin = useCallback(async (params: { email: string; password: string }) => {
-    try {
-      setAuthError(null);
-      setAuthLoading(true);
-      const user = await signInEmail(params);
+      const user = await signInGuest(nickname);
       setAuthUser(user);
       await hydrateCloudForUser();
-      showToast('Email account connected.', 'success');
-      trackEvent('auth_login', { provider: 'email' });
+      showToast('Cloud profile created with nickname.', 'success');
+      trackEvent('auth_login', { provider: 'guest_nickname' });
     } catch (error) {
       setAuthError(authErrorToMessage(error));
     } finally {
@@ -4313,8 +4245,7 @@ export default function App() {
           resolvedTheme={resolvedTheme}
           onThemeChange={setThemeMode}
           onGuestLogin={handleGuestLogin}
-          onEmailLogin={handleEmailLogin}
-          onEmailRegister={handleEmailRegister}
+          onNicknameRegister={handleNicknameRegister}
           onLogout={handleLogout}
           onBack={() => setScreen('menu')}
           onResendVerification={handleResendVerification}
