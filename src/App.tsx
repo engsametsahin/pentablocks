@@ -3718,6 +3718,10 @@ export default function App() {
   const dragValid = isDragValid();
   const tier = getTier(level);
   const availableById = new Map<string, Piece>(availablePieces.map((piece) => [piece.id, piece] as const));
+  const pieceById = new Map<string, Piece>([
+    ...placedPieces.map((piece) => [piece.id, piece] as const),
+    ...availablePieces.map((piece) => [piece.id, piece] as const),
+  ]);
   const stashRenderOrder = (stashSlotOrder.length > 0 ? stashSlotOrder : availablePieces.map((piece) => piece.id))
     .filter((id, index, arr) => arr.indexOf(id) === index);
 
@@ -3972,11 +3976,24 @@ export default function App() {
               <div className="flex flex-wrap items-end justify-center gap-x-4 gap-y-3 px-2">
                 {stashRenderOrder.map((pieceId) => {
                   const piece = availableById.get(pieceId);
-                  if (!piece) return null;
-                  const shapeSize = getShapeSize(piece.shape);
+                  const slotPiece = piece ?? pieceById.get(pieceId);
+                  if (!slotPiece) return null;
+                  const shapeSize = getShapeSize(slotPiece.shape);
                   const wrapperPadding = Math.max(4, Math.round(cellSize * 0.16));
                   const wrapperWidth = shapeSize.width * cellSize + wrapperPadding * 2;
                   const wrapperHeight = shapeSize.height * cellSize + wrapperPadding * 2;
+
+                  if (!piece) {
+                    return (
+                      <div
+                        key={`stash-${pieceId}`}
+                        className="pointer-events-none opacity-0"
+                        aria-hidden="true"
+                        style={{ width: wrapperWidth, height: wrapperHeight }}
+                      />
+                    );
+                  }
+
                   return (
                     <div
                       key={`stash-${pieceId}`}
