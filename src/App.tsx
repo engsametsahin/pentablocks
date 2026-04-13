@@ -3227,6 +3227,10 @@ export default function App() {
   // Lock page scroll on game screen for better mobile playability.
   useEffect(() => {
     if (screen !== 'game') return;
+    const shouldLockScroll = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && (window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(max-width: 768px)').matches);
+    if (!shouldLockScroll) return;
 
     const prevBodyOverflow = document.body.style.overflow;
     const prevHtmlOverflow = document.documentElement.style.overflow;
