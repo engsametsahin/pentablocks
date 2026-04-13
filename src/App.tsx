@@ -50,6 +50,13 @@ const DEFAULT_PLAYER_STATS: PlayerStats = {
   totalPlaySeconds: 0,
 };
 
+function getResponsiveCellSize(viewportWidth: number) {
+  if (viewportWidth <= 390) return 34;
+  if (viewportWidth <= 480) return 36;
+  if (viewportWidth <= 640) return 40;
+  return CELL_SIZE;
+}
+
 type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer';
 type GameMode = 'single' | 'multiplayer';
 type RoomDifficulty = 'easy' | 'moderate' | 'hard' | 'very_hard';
@@ -1831,6 +1838,7 @@ function ErrorModal({ message, onClose }: { message: string; onClose: () => void
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
   const [screen, setScreen] = useState<Screen>('menu');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
@@ -1913,6 +1921,8 @@ export default function App() {
   const boardDimensions = getBoardDimensions(config);
   const gridWidth = boardDimensions.width;
   const gridHeight = boardDimensions.height;
+  const cellSize = getResponsiveCellSize(viewportWidth);
+  const gridPadding = cellSize < CELL_SIZE ? 20 : GRID_PADDING;
   const targetCells = gridWidth * gridHeight;
   const totalPiecesCount = config.p4 + config.p3 + config.p2 + config.p1;
   const isMultiplayerRound = gameMode === 'multiplayer' && activeChallenge !== null;
@@ -2257,6 +2267,13 @@ export default function App() {
     }
     media.addListener(onChange);
     return () => media.removeListener(onChange);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
   useEffect(() => {
@@ -3045,9 +3062,9 @@ export default function App() {
   // Compute grid position from screen coords — single source of truth
   const screenToGrid = (clientX: number, clientY: number): Point => {
     const containerRect = containerRef.current!.getBoundingClientRect();
-    const x = clientX - containerRect.left - GRID_PADDING - dragOffsetRef.current.x;
-    const y = clientY - containerRect.top - GRID_PADDING - dragOffsetRef.current.y;
-    return { x: Math.round(x / CELL_SIZE), y: Math.round(y / CELL_SIZE) };
+    const x = clientX - containerRect.left - gridPadding - dragOffsetRef.current.x;
+    const y = clientY - containerRect.top - gridPadding - dragOffsetRef.current.y;
+    return { x: Math.round(x / cellSize), y: Math.round(y / cellSize) };
   };
 
   const releaseCapturedPointer = useCallback((pointerId: number | null) => {
@@ -3076,8 +3093,8 @@ export default function App() {
 
     const shape = 'currentShape' in activePiece ? activePiece.currentShape : activePiece.shape;
     const shapeSize = getShapeSize(shape);
-    const pieceWidth = shapeSize.width * CELL_SIZE;
-    const pieceHeight = shapeSize.height * CELL_SIZE;
+    const pieceWidth = shapeSize.width * cellSize;
+    const pieceHeight = shapeSize.height * cellSize;
     const margin = 8;
 
     const minLeft = margin;
@@ -3130,8 +3147,8 @@ export default function App() {
       // Compute centering offset the same way the stash renderer does.
       const footprint = PIECE_MAX_FOOTPRINT[id] ?? { width: 1, height: 1 };
       const shapeSize = getShapeSize(p.shape);
-      const centerOffsetX = Math.max(0, Math.floor((footprint.width * CELL_SIZE - shapeSize.width * CELL_SIZE) / 2));
-      const centerOffsetY = Math.max(0, Math.floor((footprint.height * CELL_SIZE - shapeSize.height * CELL_SIZE) / 2));
+      const centerOffsetX = Math.max(0, Math.floor((footprint.width * cellSize - shapeSize.width * cellSize) / 2));
+      const centerOffsetY = Math.max(0, Math.floor((footprint.height * cellSize - shapeSize.height * cellSize) / 2));
 
       const rect = target.getBoundingClientRect();
       // Offset from the piece's first cell, not the slot edge
@@ -3143,8 +3160,8 @@ export default function App() {
       setDraggedPiece({ id, offset: { x: offsetX, y: offsetY } });
 
       const containerRect = containerRef.current?.getBoundingClientRect();
-      const initX = containerRect ? Math.round((clientX - containerRect.left - GRID_PADDING - offsetX) / CELL_SIZE) : 0;
-      const initY = containerRect ? Math.round((clientY - containerRect.top - GRID_PADDING - offsetY) / CELL_SIZE) : 0;
+      const initX = containerRect ? Math.round((clientX - containerRect.left - gridPadding - offsetX) / cellSize) : 0;
+      const initY = containerRect ? Math.round((clientY - containerRect.top - gridPadding - offsetY) / cellSize) : 0;
       setPlacedPieces((prev) => {
         if (prev.some((piece) => piece.id === id)) return prev;
         return [
@@ -3825,16 +3842,16 @@ export default function App() {
           <div
             ref={containerRef}
             className={cn('relative z-20 p-8 rounded-[40px] shadow-2xl border overflow-visible', resolvedTheme === 'dark' ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/5')}
-            style={{ width: gridWidth * CELL_SIZE + 64, height: gridHeight * CELL_SIZE + 64 }}
+            style={{ width: gridWidth * cellSize + gridPadding * 2, height: gridHeight * cellSize + gridPadding * 2 }}
           >
             {/* Grid Background */}
             <div
               className={cn('grid border-2', resolvedTheme === 'dark' ? 'border-white/15 bg-white/3' : 'border-gray-200 bg-gray-50')}
               style={{
-                gridTemplateColumns: `repeat(${gridWidth}, ${CELL_SIZE}px)`,
-                gridTemplateRows: `repeat(${gridHeight}, ${CELL_SIZE}px)`,
-                width: gridWidth * CELL_SIZE,
-                height: gridHeight * CELL_SIZE,
+                gridTemplateColumns: `repeat(${gridWidth}, ${cellSize}px)`,
+                gridTemplateRows: `repeat(${gridHeight}, ${cellSize}px)`,
+                width: gridWidth * cellSize,
+                height: gridHeight * cellSize,
               }}
             >
               {Array.from({ length: targetCells }).map((_, i) => {
@@ -3870,10 +3887,10 @@ export default function App() {
                       !isWin && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                     )}
                     style={{
-                      left: piece.position.x * CELL_SIZE + GRID_PADDING,
-                      top: piece.position.y * CELL_SIZE + GRID_PADDING,
-                      width: shapeSize.width * CELL_SIZE,
-                      height: shapeSize.height * CELL_SIZE,
+                      left: piece.position.x * cellSize + gridPadding,
+                      top: piece.position.y * cellSize + gridPadding,
+                      width: shapeSize.width * cellSize,
+                      height: shapeSize.height * cellSize,
                     }}
                     onPointerDown={(e) => onPiecePointerDown(e, piece.id, true)}
                   >
@@ -3882,9 +3899,9 @@ export default function App() {
                         key={i}
                         style={blockCellStyle(
                           piece.color,
-                          CELL_SIZE,
-                          cell.x * CELL_SIZE,
-                          cell.y * CELL_SIZE,
+                          cellSize,
+                          cell.x * cellSize,
+                          cell.y * cellSize,
                           draggedPiece?.id === piece.id && dragValid === false ? 0.6 : 1,
                         )}
                       />
@@ -3917,11 +3934,11 @@ export default function App() {
                   {stashRenderOrder.map((pieceId) => {
                     const piece = availableById.get(pieceId);
                     const footprint = PIECE_MAX_FOOTPRINT[pieceId] ?? { width: 1, height: 1 };
-                    const slotWidth = footprint.width * CELL_SIZE;
-                    const slotHeight = footprint.height * CELL_SIZE;
+                    const slotWidth = footprint.width * cellSize;
+                    const slotHeight = footprint.height * cellSize;
                     const shapeSize = piece ? getShapeSize(piece.shape) : { width: 1, height: 1 };
-                    const offsetX = piece ? Math.max(0, Math.floor((slotWidth - shapeSize.width * CELL_SIZE) / 2)) : 0;
-                    const offsetY = piece ? Math.max(0, Math.floor((slotHeight - shapeSize.height * CELL_SIZE) / 2)) : 0;
+                    const offsetX = piece ? Math.max(0, Math.floor((slotWidth - shapeSize.width * cellSize) / 2)) : 0;
+                    const offsetY = piece ? Math.max(0, Math.floor((slotHeight - shapeSize.height * cellSize) / 2)) : 0;
                     return (
                       <div
                         key={`m-${pieceId}`}
@@ -3940,9 +3957,9 @@ export default function App() {
                             key={`${piece.id}-m-${i}`}
                             style={blockCellStyle(
                               piece.color,
-                              CELL_SIZE,
-                              offsetX + cell.x * CELL_SIZE,
-                              offsetY + cell.y * CELL_SIZE,
+                              cellSize,
+                              offsetX + cell.x * cellSize,
+                              offsetY + cell.y * cellSize,
                             )}
                           />
                         )) : (
@@ -3963,11 +3980,11 @@ export default function App() {
                 {stashRenderOrder.map((pieceId) => {
                   const piece = availableById.get(pieceId);
                   const footprint = PIECE_MAX_FOOTPRINT[pieceId] ?? { width: 1, height: 1 };
-                  const slotWidth = footprint.width * CELL_SIZE;
-                  const slotHeight = footprint.height * CELL_SIZE;
+                  const slotWidth = footprint.width * cellSize;
+                  const slotHeight = footprint.height * cellSize;
                   const shapeSize = piece ? getShapeSize(piece.shape) : { width: 1, height: 1 };
-                  const offsetX = piece ? Math.max(0, Math.floor((slotWidth - shapeSize.width * CELL_SIZE) / 2)) : 0;
-                  const offsetY = piece ? Math.max(0, Math.floor((slotHeight - shapeSize.height * CELL_SIZE) / 2)) : 0;
+                  const offsetX = piece ? Math.max(0, Math.floor((slotWidth - shapeSize.width * cellSize) / 2)) : 0;
+                  const offsetY = piece ? Math.max(0, Math.floor((slotHeight - shapeSize.height * cellSize) / 2)) : 0;
                   return (
                     <div
                       key={`d-${pieceId}`}
@@ -3986,9 +4003,9 @@ export default function App() {
                           key={`${piece.id}-d-${i}`}
                           style={blockCellStyle(
                             piece.color,
-                            CELL_SIZE,
-                            offsetX + cell.x * CELL_SIZE,
-                            offsetY + cell.y * CELL_SIZE,
+                            cellSize,
+                            offsetX + cell.x * cellSize,
+                            offsetY + cell.y * cellSize,
                           )}
                         />
                       )) : (
