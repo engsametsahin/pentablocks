@@ -275,6 +275,10 @@ const PIECE_MAX_FOOTPRINT: Record<string, { width: number; height: number }> = O
   ALL_PIECES.map((piece) => [piece.id, getMaxFootprint(piece.shape)]),
 );
 
+const PIECE_BY_ID: Record<string, Piece> = Object.fromEntries(
+  ALL_PIECES.map((piece) => [piece.id, piece]),
+);
+
 /** Build inline style for a single block cell with a 2.5D beveled look */
 function blockCellStyle(color: string, size: number, left: number, top: number, opacity = 1): React.CSSProperties {
   // Derive lighter and darker shades for the bevel
@@ -1878,6 +1882,7 @@ export default function App() {
 
   const gameSurfaceRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const stashZoneRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{
     x: number;
     y: number;
@@ -2979,6 +2984,28 @@ export default function App() {
     });
   }, []);
 
+  const resetPiecesToStash = useCallback(() => {
+    const allIds = stashOrderRef.current.length > 0
+      ? stashOrderRef.current
+      : Array.from(new Set([...availablePieces.map((piece) => piece.id), ...placedPieces.map((piece) => piece.id)]));
+
+    const restoredPieces = allIds
+      .map((id) => PIECE_BY_ID[id])
+      .filter((piece): piece is Piece => Boolean(piece));
+
+    setPlacedPieces([]);
+    setAvailablePieces(restoredPieces);
+    setSelectedPieceId(null);
+    setDraggedPiece(null);
+    dragStartRef.current = null;
+    isDraggingRef.current = false;
+    const activeTrack = pointerTrackRef.current;
+    if (activeTrack?.longPressTimer) {
+      window.clearTimeout(activeTrack.longPressTimer);
+    }
+    pointerTrackRef.current = null;
+  }, [availablePieces, placedPieces]);
+
   // Keyboard shortcuts — work during drag too
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -3034,6 +3061,34 @@ export default function App() {
     }
     pointerTrackRef.current = null;
   }, []);
+
+  const constrainDragPointer = useCallback((clientX: number, clientY: number, pieceId: string) => {
+    const activePiece = placedPieces.find((piece) => piece.id === pieceId) ?? availablePieces.find((piece) => piece.id === pieceId);
+    if (!activePiece) return { clientX, clientY };
+
+    const shape = 'currentShape' in activePiece ? activePiece.currentShape : activePiece.shape;
+    const shapeSize = getShapeSize(shape);
+    const pieceWidth = shapeSize.width * CELL_SIZE;
+    const pieceHeight = shapeSize.height * CELL_SIZE;
+    const margin = 8;
+
+    const minLeft = margin;
+    const maxLeft = Math.max(minLeft, window.innerWidth - pieceWidth - margin);
+    let maxTop = Math.max(margin, window.innerHeight - pieceHeight - margin);
+
+    const stashRect = stashZoneRef.current?.getBoundingClientRect();
+    if (stashRect) {
+      maxTop = Math.min(maxTop, Math.max(margin, stashRect.top - pieceHeight - 12));
+    }
+
+    const left = Math.min(maxLeft, Math.max(minLeft, clientX - dragOffsetRef.current.x));
+    const top = Math.min(maxTop, Math.max(margin, clientY - dragOffsetRef.current.y));
+
+    return {
+      clientX: left + dragOffsetRef.current.x,
+      clientY: top + dragOffsetRef.current.y,
+    };
+  }, [availablePieces, placedPieces]);
 
   const handlePointerDown = (
     clientX: number,
@@ -3101,8 +3156,9 @@ export default function App() {
   const handlePointerMove = (clientX: number, clientY: number, pointerId: number) => {
     if (!isDraggingRef.current || !containerRef.current || !dragStartRef.current) return;
     if (dragStartRef.current.pointerId !== pointerId) return;
-    const { x: gridX, y: gridY } = screenToGrid(clientX, clientY);
     const dragId = dragStartRef.current.id;
+    const constrained = constrainDragPointer(clientX, clientY, dragId);
+    const { x: gridX, y: gridY } = screenToGrid(constrained.clientX, constrained.clientY);
     setPlacedPieces((prev) =>
       prev.map((p) => p.id === dragId ? { ...p, position: { x: gridX, y: gridY } } : p)
     );
@@ -3733,6 +3789,17 @@ export default function App() {
               Return to Stash
               <span className="ml-2 text-[10px] align-middle">(Esc)</span>
             </button>
+            <button
+              onClick={resetPiecesToStash}
+              disabled={placedPieces.length === 0}
+              className={cn(
+                'w-full py-3 rounded-xl transition-all text-xs font-bold uppercase disabled:opacity-30',
+                resolvedTheme === 'dark' ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800',
+              )}
+              aria-label="Reset all pieces to stash"
+            >
+              Reset Pieces
+            </button>
           </div>
 
           <div className={cn('text-white p-6 rounded-3xl shadow-xl', resolvedTheme === 'dark' ? 'bg-white/5 border border-white/10' : 'bg-gray-900')}>
@@ -3813,7 +3880,13 @@ export default function App() {
 
           {/* Stash — keep slots fixed so other pieces don't jump around on mobile */}
           {stashRenderOrder.length > 0 && (
-            <div className="mt-4 md:mt-6 w-full">
+            <div
+              ref={stashZoneRef}
+              className={cn(
+                'mt-4 md:mt-6 w-full rounded-[32px] border shadow-xl px-4 py-4 md:px-6 md:py-5',
+                resolvedTheme === 'dark' ? 'bg-white/5 border-white/10' : 'bg-white border-black/5',
+              )}
+            >
               {/* Fixed-height wrapper so the hint disappearing doesn't shift pieces */}
               <div className="h-8 mb-2 flex items-center justify-center">
                 {!isActive && !isGameOver && !isWin && (
@@ -3823,8 +3896,8 @@ export default function App() {
                   )}>Click or drag to start!</p>
                 )}
               </div>
-              <div className="md:hidden overflow-x-auto pb-2">
-                <div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-3 px-2 w-max min-w-full justify-center">
+              <div className="md:hidden overflow-x-auto pb-1">
+                <div className="grid grid-rows-2 grid-flow-col auto-cols-max gap-4 px-2 w-max min-w-full justify-center">
                   {stashRenderOrder.map((pieceId) => {
                     const piece = availableById.get(pieceId);
                     const footprint = PIECE_MAX_FOOTPRINT[pieceId] ?? { width: 1, height: 1 };
@@ -3837,8 +3910,9 @@ export default function App() {
                       <div
                         key={`m-${pieceId}`}
                         className={cn(
-                          'relative rounded-lg touch-none',
+                          'relative rounded-2xl touch-none',
                           piece ? 'cursor-grab' : 'opacity-35',
+                          resolvedTheme === 'dark' ? 'bg-white/[0.03]' : 'bg-black/[0.03]',
                           piece && selectedPieceId === piece.id && 'ring-2 ring-offset-2',
                           piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                         )}
@@ -3869,7 +3943,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="hidden md:flex flex-wrap justify-center gap-6 px-4">
+              <div className="hidden md:flex flex-wrap justify-center gap-6 px-2">
                 {stashRenderOrder.map((pieceId) => {
                   const piece = availableById.get(pieceId);
                   const footprint = PIECE_MAX_FOOTPRINT[pieceId] ?? { width: 1, height: 1 };
@@ -3882,8 +3956,9 @@ export default function App() {
                     <div
                       key={`d-${pieceId}`}
                       className={cn(
-                        'relative rounded-lg touch-none',
+                        'relative rounded-2xl touch-none',
                         piece ? 'cursor-grab transition-all hover:scale-105' : 'opacity-35',
+                        resolvedTheme === 'dark' ? 'bg-white/[0.03]' : 'bg-black/[0.03]',
                         piece && selectedPieceId === piece.id && 'ring-2 ring-offset-4',
                         piece && selectedPieceId === piece.id && (resolvedTheme === 'dark' ? 'ring-white' : 'ring-black'),
                       )}
