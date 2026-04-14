@@ -117,6 +117,19 @@ interface SolvablePoolEntry {
   distanceToTarget: number;
 }
 
+interface PuzzleGenerationTelemetry {
+  source: 'pool' | 'live';
+  attemptsUsed: number;
+  solvedCandidates: number;
+  poolSize: number;
+  recentHistorySize: number;
+}
+
+interface PuzzleSelectionResult {
+  entry: SolvablePoolEntry;
+  telemetry: PuzzleGenerationTelemetry;
+}
+
 interface PlayerStats {
   gamesStarted: number;
   wins: number;
@@ -405,6 +418,71 @@ const PIECE_DIFFICULTY_WEIGHT: Record<string, number> = {
   Z4: 1.45,
 };
 
+// ── Tier-based piece selection weights ──────────────────────────────────────
+// Controls how likely each piece is to appear at different difficulty tiers.
+// Higher weight = more likely to be picked.  The system uses weighted random
+// selection (without replacement) instead of uniform shuffle, so early levels
+// naturally get simpler pieces and late levels get harder ones.
+//
+// Design rationale:
+//   - O4/I4 have few orientations → easier to place → favored early
+//   - S4/Z4 are mirror-asymmetric with many orientations → harder → favored late
+//   - T4/J4/L4 are mid-complexity → balanced across tiers
+//   - Fillers (I1/I2/I3/L3) follow a similar gradient but matter less
+//
+// Each row: [Lv1-20, Lv21-40, Lv41-60, Lv61-80, Lv81-100]
+const PIECE_TIER_SELECTION_WEIGHT: Record<string, [number, number, number, number, number]> = {
+  // Easy pieces — strong early, fade late
+  O4: [5.0, 3.5, 2.0, 1.0, 0.5],
+  I4: [4.5, 3.0, 2.0, 1.2, 0.8],
+  // Mid pieces — balanced curve
+  T4: [2.0, 3.0, 3.5, 3.0, 2.5],
+  J4: [1.5, 2.5, 3.0, 3.5, 3.0],
+  L4: [1.5, 2.5, 3.0, 3.5, 3.0],
+  // Hard pieces — weak early, strong late
+  S4: [0.5, 1.5, 2.5, 4.0, 5.0],
+  Z4: [0.5, 1.5, 2.5, 4.0, 5.0],
+  // Fillers
+  I3: [3.0, 2.5, 2.0, 1.5, 1.0],
+  L3: [1.0, 1.5, 2.0, 2.5, 3.0],
+  I2: [2.0, 2.0, 2.0, 2.0, 2.0],
+  I1: [2.0, 2.0, 2.0, 2.0, 2.0],
+};
+
+/** Get the selection weight for a piece at a given level. */
+function getPieceSelectionWeight(pieceId: string, levelId: number): number {
+  const tiers = PIECE_TIER_SELECTION_WEIGHT[pieceId];
+  if (!tiers) return 1;
+  const tierIndex = Math.min(4, Math.floor((levelId - 1) / 20));
+  return tiers[tierIndex];
+}
+
+/** Pick `count` items from `items` using weighted random selection (no replacement). */
+function weightedPickWithRng<T extends { id: string }>(
+  items: T[],
+  count: number,
+  levelId: number,
+  rng: () => number,
+): T[] {
+  if (count >= items.length) return shuffleWithRng(items, rng);
+  const pool = items.map((item) => ({ item, weight: getPieceSelectionWeight(item.id, levelId) }));
+  const picked: T[] = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const totalWeight = pool.reduce((sum, entry) => sum + entry.weight, 0);
+    let roll = rng() * totalWeight;
+    let chosenIdx = 0;
+    for (let j = 0; j < pool.length; j += 1) {
+      roll -= pool[j].weight;
+      if (roll <= 0) { chosenIdx = j; break; }
+    }
+    picked.push(pool[chosenIdx].item);
+    pool.splice(chosenIdx, 1);
+  }
+
+  return picked;
+}
+
 function clonePieceSet(pieces: Piece[]) {
   return pieces.map((piece) => ({
     ...piece,
@@ -450,10 +528,10 @@ function createChallengePiecePicker(cfg: LevelConfig, random: () => number) {
   const p1 = ALL_PIECES.filter((piece) => piece.shape.length === 1);
 
   return () => [
-    ...shuffleWithRng(p4, random).slice(0, cfg.p4),
-    ...shuffleWithRng(p3, random).slice(0, cfg.p3),
-    ...shuffleWithRng(p2, random).slice(0, cfg.p2),
-    ...shuffleWithRng(p1, random).slice(0, cfg.p1),
+    ...weightedPickWithRng(p4, cfg.p4, cfg.id, random),
+    ...weightedPickWithRng(p3, cfg.p3, cfg.id, random),
+    ...weightedPickWithRng(p2, cfg.p2, cfg.id, random),
+    ...weightedPickWithRng(p1, cfg.p1, cfg.id, random),
   ];
 }
 
@@ -541,8 +619,9 @@ function pickPoolCandidate(
     seed?: string;
     recentFingerprints?: Set<string>;
     allowRecentFallback?: boolean;
+    recentHistorySize?: number;
   },
-) {
+): PuzzleSelectionResult | null {
   const pool = getPrecomputedLevelPool(cfg);
   if (pool.length === 0) return null;
 
@@ -565,7 +644,16 @@ function pickPoolCandidate(
     ? createSeededRng(`pool-pick:${cfg.id}:${options.seed}`)
     : Math.random;
   const index = Math.floor(picker() * topBand.length);
-  return cloneSolvablePoolEntry(topBand[index]);
+  return {
+    entry: cloneSolvablePoolEntry(topBand[index]),
+    telemetry: {
+      source: 'pool',
+      attemptsUsed: 0,
+      solvedCandidates: 0,
+      poolSize: pool.length,
+      recentHistorySize: options?.recentHistorySize ?? recentFingerprints.size,
+    },
+  };
 }
 
 function findSolvablePieceSet(
@@ -578,8 +666,10 @@ function findSolvablePieceSet(
     batchCount?: number;
     recentFingerprints?: Set<string>;
     noveltyPenalty?: number;
+    poolSize?: number;
+    recentHistorySize?: number;
   },
-) {
+): PuzzleSelectionResult {
   const board = getBoardDimensions(cfg);
   const cacheKey = options?.cacheKey;
   const attemptsPerBatch = options?.attemptsPerBatch ?? 140;
@@ -589,20 +679,32 @@ function findSolvablePieceSet(
   const acceptableDistance = cfg.id <= 20 ? 4.5 : cfg.id <= 60 ? 3.25 : 2.5;
   const recentFingerprints = options?.recentFingerprints ?? new Set<string>();
   const noveltyPenalty = options?.noveltyPenalty ?? 8;
+  const poolSize = options?.poolSize ?? 0;
+  const recentHistorySize = options?.recentHistorySize ?? recentFingerprints.size;
 
   if (cacheKey && solvablePieceSetCache.has(cacheKey)) {
     const pieces = clonePieceSet(solvablePieceSetCache.get(cacheKey)!);
     return {
-      pieces,
-      fingerprint: buildPuzzleFingerprint(cfg, pieces),
-      difficultyScore: 0,
-      distanceToTarget: 0,
+      entry: {
+        pieces,
+        fingerprint: buildPuzzleFingerprint(cfg, pieces),
+        difficultyScore: 0,
+        distanceToTarget: 0,
+      },
+      telemetry: {
+        source: 'live',
+        attemptsUsed: 0,
+        solvedCandidates: 0,
+        poolSize,
+        recentHistorySize,
+      },
     };
   }
 
   let bestCandidate: SolvablePoolEntry | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
   let solvedCandidates = 0;
+  let attemptsUsed = 0;
 
   for (let batch = 0; batch < batchCount; batch += 1) {
     const random = options?.seed
@@ -611,6 +713,7 @@ function findSolvablePieceSet(
     const pickCandidates = createChallengePiecePicker(cfg, random);
 
     for (let attempts = 0; attempts < attemptsPerBatch; attempts += 1) {
+      attemptsUsed += 1;
       const candidate = pickCandidates();
       const analysis = analyzeKatamino(board.width, board.height, candidate);
       if (analysis.solution) {
@@ -640,7 +743,16 @@ function findSolvablePieceSet(
             if (cacheKey) {
               solvablePieceSetCache.set(cacheKey, clonePieceSet(bestCandidate.pieces));
             }
-            return cloneSolvablePoolEntry(bestCandidate);
+            return {
+              entry: cloneSolvablePoolEntry(bestCandidate),
+              telemetry: {
+                source: 'live',
+                attemptsUsed,
+                solvedCandidates,
+                poolSize,
+                recentHistorySize,
+              },
+            };
           }
         }
       }
@@ -651,41 +763,99 @@ function findSolvablePieceSet(
     if (cacheKey) {
       solvablePieceSetCache.set(cacheKey, clonePieceSet(bestCandidate.pieces));
     }
-    return cloneSolvablePoolEntry(bestCandidate);
+    return {
+      entry: cloneSolvablePoolEntry(bestCandidate),
+      telemetry: {
+        source: 'live',
+        attemptsUsed,
+        solvedCandidates,
+        poolSize,
+        recentHistorySize,
+      },
+    };
   }
 
-  throw new Error(`Unable to generate a solvable puzzle for level ${cfg.id}.`);
+  const error = new Error(`Unable to generate a solvable puzzle for level ${cfg.id}.`) as Error & {
+    generationTelemetry?: PuzzleGenerationTelemetry;
+  };
+  error.generationTelemetry = {
+    source: 'live',
+    attemptsUsed,
+    solvedCandidates,
+    poolSize,
+    recentHistorySize,
+  };
+  throw error;
 }
 
-function generateChallengePieces(seed: string, cfg: LevelConfig) {
+function generateChallengePieces(
+  seed: string,
+  cfg: LevelConfig,
+  options?: {
+    attemptsPerBatch?: number;
+    batchCount?: number;
+  },
+): PuzzleSelectionResult {
+  const poolSize = getPrecomputedLevelPool(cfg).length;
   const challengeFromPool = pickPoolCandidate(cfg, {
     seed,
     allowRecentFallback: true,
+    recentHistorySize: 0,
   });
   if (challengeFromPool) return challengeFromPool;
   return findSolvablePieceSet(cfg, {
     cacheKey: `challenge:${cfg.id}:${seed}`,
     seed,
-    attemptsPerBatch: 160,
-    batchCount: 10,
+    attemptsPerBatch: options?.attemptsPerBatch ?? 160,
+    batchCount: options?.batchCount ?? 10,
+    poolSize,
+    recentHistorySize: 0,
   });
 }
 
-function selectSinglePlayerPuzzle(cfg: LevelConfig, recentHistory: string[]) {
+function selectSinglePlayerPuzzle(
+  cfg: LevelConfig,
+  recentHistory: string[],
+  options?: {
+    attemptsPerBatch?: number;
+    batchCount?: number;
+    noveltyPenalty?: number;
+    allowRecentFallback?: boolean;
+  },
+): PuzzleSelectionResult {
   const recentFingerprints = new Set(recentHistory);
+  const poolSize = getPrecomputedLevelPool(cfg).length;
   const fromPool = pickPoolCandidate(cfg, {
     recentFingerprints,
-    allowRecentFallback: false,
+    allowRecentFallback: options?.allowRecentFallback ?? false,
+    recentHistorySize: recentHistory.length,
   });
   if (fromPool) return fromPool;
 
   return findSolvablePieceSet(cfg, {
     random: Math.random,
-    attemptsPerBatch: 260,
-    batchCount: 2,
+    attemptsPerBatch: options?.attemptsPerBatch ?? 260,
+    batchCount: options?.batchCount ?? 2,
     recentFingerprints,
-    noveltyPenalty: 12,
+    noveltyPenalty: options?.noveltyPenalty ?? 12,
+    poolSize,
+    recentHistorySize: recentHistory.length,
   });
+}
+
+function getSameTierFallbackLevels(levelId: number) {
+  const tierStart = Math.floor((levelId - 1) / 10) * 10 + 1;
+  const tierEnd = Math.min(MAX_LEVEL, tierStart + 9);
+  const order: number[] = [];
+
+  for (let offset = 1; tierStart <= levelId - offset || levelId + offset <= tierEnd; offset += 1) {
+    const lower = levelId - offset;
+    const upper = levelId + offset;
+    if (lower >= tierStart) order.push(lower);
+    if (upper <= tierEnd) order.push(upper);
+  }
+
+  return order;
 }
 
 function readLocalCompletedLevels() {
@@ -3686,29 +3856,106 @@ export default function App() {
 
     await new Promise(resolve => setTimeout(resolve, 50));
 
-    let selectedPuzzle: SolvablePoolEntry | null = null;
+    let selectedPuzzle: PuzzleSelectionResult | null = null;
+    let generationAttempt = 0;
+
+    const logGenerationFailure = (
+      attemptLabel: string,
+      failedLevelId: number,
+      error: unknown,
+      fallbackLevelId?: number,
+    ) => {
+      const generationTelemetry = (error as { generationTelemetry?: PuzzleGenerationTelemetry })?.generationTelemetry;
+      console.warn('puzzle generation failed', {
+        attempt: attemptLabel,
+        levelId: failedLevelId,
+        poolSize: getPrecomputedLevelPool(LEVEL_CONFIGS[failedLevelId - 1]).length,
+        recentHistorySize: recentPuzzleFingerprints.length,
+        attemptsUsed: generationTelemetry?.attemptsUsed ?? null,
+        solvedCandidates: generationTelemetry?.solvedCandidates ?? null,
+        source: generationTelemetry?.source ?? null,
+        fallbackLevelId: fallbackLevelId ?? null,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    };
+
     try {
+      generationAttempt += 1;
       if (mode === 'multiplayer' && options?.puzzleSeed) {
         selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg);
       } else {
         selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints);
       }
     } catch (error) {
-      console.error('puzzle generation failed', error);
-      setIsGenerating(false);
-      setIsActive(false);
-      setErrorMessage('We could not generate a valid puzzle for this level. Please try again.');
-      return;
+      logGenerationFailure(`primary-${generationAttempt}`, levelToSet, error);
+      showToast('Regenerating puzzle with extended search...', 'warning');
+
+      try {
+        generationAttempt += 1;
+        if (mode === 'multiplayer' && options?.puzzleSeed) {
+          selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg, {
+            attemptsPerBatch: 260,
+            batchCount: 14,
+          });
+        } else {
+          selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints, {
+            attemptsPerBatch: 420,
+            batchCount: 3,
+            noveltyPenalty: 16,
+            allowRecentFallback: true,
+          });
+        }
+      } catch (retryError) {
+        logGenerationFailure(`retry-${generationAttempt}`, levelToSet, retryError);
+
+        if (mode === 'single') {
+          const fallbackCandidates = getSameTierFallbackLevels(levelToSet);
+          let fallbackApplied = false;
+
+          for (const fallbackLevelId of fallbackCandidates) {
+            const fallbackCfg = LEVEL_CONFIGS[fallbackLevelId - 1];
+            try {
+              generationAttempt += 1;
+              selectedPuzzle = selectSinglePlayerPuzzle(fallbackCfg, recentPuzzleFingerprints, {
+                attemptsPerBatch: 420,
+                batchCount: 3,
+                noveltyPenalty: 16,
+                allowRecentFallback: true,
+              });
+              setLevel(fallbackLevelId);
+              setSinglePlayerLevel(fallbackLevelId);
+              showToast(`Level ${levelToSet} was unavailable. Loaded Level ${fallbackLevelId} in the same tier.`, 'warning');
+              logGenerationFailure(`fallback-success-${generationAttempt}`, fallbackLevelId, retryError, fallbackLevelId);
+              fallbackApplied = true;
+              break;
+            } catch (fallbackError) {
+              logGenerationFailure(`fallback-failed-${generationAttempt}`, fallbackLevelId, fallbackError, fallbackLevelId);
+            }
+          }
+
+          if (!fallbackApplied) {
+            setIsGenerating(false);
+            setIsActive(false);
+            setErrorMessage('We could not generate a valid puzzle for this level. Please try again.');
+            return;
+          }
+        } else {
+          setIsGenerating(false);
+          setIsActive(false);
+          setErrorMessage('We could not generate a valid puzzle for this level. Please try again.');
+          return;
+        }
+      }
     }
 
     setAvailablePieces(
-      selectedPuzzle.pieces.map((piece) => ({
+      selectedPuzzle.entry.pieces.map((piece) => ({
         ...piece,
         shape: orientShapeForStash(piece.shape),
       })),
     );
     if (mode === 'single') {
-      setRecentPuzzleFingerprints((prev) => appendRecentPuzzleFingerprint(prev, selectedPuzzle.fingerprint));
+      setRecentPuzzleFingerprints((prev) => appendRecentPuzzleFingerprint(prev, selectedPuzzle.entry.fingerprint));
     }
     setIsGenerating(false);
   }, [level, updatePlayerStats, recentPuzzleFingerprints]);
@@ -4331,8 +4578,15 @@ export default function App() {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
 
-    if (dragStartRef.current && dragStartRef.current.pointerId !== e.pointerId) {
-      handlePointerUp(dragStartRef.current.pointerId);
+    // Always clean up any existing drag state before starting a new one.
+    // This handles: different pointerId, same pointerId reused by browser,
+    // or stale state from a missed pointerup/pointercancel.
+    if (dragStartRef.current || isDraggingRef.current) {
+      releaseCapturedPointer(dragStartRef.current?.pointerId ?? null);
+      clearPointerTrack();
+      dragStartRef.current = null;
+      isDraggingRef.current = false;
+      setDraggedPiece(null);
     }
 
     const surface = gameSurfaceRef.current;
@@ -4413,6 +4667,14 @@ export default function App() {
 
   const onSurfacePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
     handlePointerUp(e.pointerId);
+  };
+
+  const onSurfaceLostPointerCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+    // If we lost capture for the active drag pointer (e.g. browser cancelled it),
+    // clean up to avoid stale state that blocks subsequent interactions.
+    if (dragStartRef.current && dragStartRef.current.pointerId === e.pointerId) {
+      handlePointerUp(e.pointerId);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -4773,6 +5035,7 @@ export default function App() {
       onPointerMove={onSurfacePointerMove}
       onPointerUp={onSurfacePointerUp}
       onPointerCancel={onSurfacePointerCancel}
+      onLostPointerCapture={onSurfaceLostPointerCapture}
     >
       <CornerAccountNav
         user={authUser}
