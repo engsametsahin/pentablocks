@@ -28,6 +28,7 @@ export interface CloudProgress {
   bestTimes: Record<number, number>;
   playerStats: CloudPlayerStats;
   lastLevel: number;
+  recentPuzzleFingerprints: string[];
   updatedAt: string | null;
 }
 

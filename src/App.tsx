@@ -7,7 +7,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react';
 import { RotateCw, FlipHorizontal, RefreshCw, Trophy, Timer, ChevronRight, ChevronLeft, Lock, Users, User, Star, BarChart3, Target, Zap, Medal, Link2, Copy } from 'lucide-react';
 import { ALL_PIECES, Piece, Point, rotateShape, flipShape } from './constants';
-import { solveKatamino } from './solver';
+import { analyzeKatamino, solveKatamino } from './solver';
 import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
 import { configureAdSensePreference, initializeAdSense } from './lib/adsense';
@@ -40,6 +40,11 @@ const LOCAL_COMPLETED_KEY = 'katamino-completed';
 const LOCAL_BEST_TIMES_KEY = 'katamino-best-times';
 const LOCAL_PLAYER_STATS_KEY = 'katamino-player-stats';
 const LOCAL_LAST_LEVEL_KEY = 'katamino-last-level';
+const RECENT_PUZZLE_HISTORY_KEY = 'pentablocks-recent-puzzles';
+const RECENT_PUZZLE_HISTORY_LIMIT = 36;
+const PRECOMPUTED_POOL_SIZE = 12;
+const PRECOMPUTED_POOL_SOLVED_TARGET = 24;
+const PRECOMPUTED_POOL_MAX_ATTEMPTS = 520;
 const THEME_MODE_KEY = 'pentablocks-theme-mode';
 const DEFAULT_PLAYER_STATS: PlayerStats = {
   gamesStarted: 0,
@@ -103,6 +108,13 @@ interface LevelConfig {
   p2: number;
   p1: number;
   label: string;
+}
+
+interface SolvablePoolEntry {
+  pieces: Piece[];
+  fingerprint: string;
+  difficultyScore: number;
+  distanceToTarget: number;
 }
 
 interface PlayerStats {
@@ -377,27 +389,303 @@ function orientShapeForStash(shape: Point[]) {
   return best;
 }
 
-function generateChallengePieces(seed: string, cfg: LevelConfig) {
-  const board = getBoardDimensions(cfg);
-  const rng = createSeededRng(`${seed}:${cfg.id}`);
-  const p4 = ALL_PIECES.filter((p) => p.shape.length === 4);
-  const p3 = ALL_PIECES.filter((p) => p.shape.length === 3);
-  const p2 = ALL_PIECES.filter((p) => p.shape.length === 2);
-  const p1 = ALL_PIECES.filter((p) => p.shape.length === 1);
+const solvablePieceSetCache = new Map<string, Piece[]>();
+const precomputedLevelPoolCache = new Map<number, SolvablePoolEntry[]>();
+const PIECE_DIFFICULTY_WEIGHT: Record<string, number> = {
+  I1: 0.2,
+  I2: 0.4,
+  I3: 0.65,
+  O4: 0.75,
+  I4: 0.9,
+  L3: 1.1,
+  T4: 1.2,
+  J4: 1.25,
+  L4: 1.25,
+  S4: 1.45,
+  Z4: 1.45,
+};
 
-  const pickCandidates = () => [
-    ...shuffleWithRng(p4, rng).slice(0, cfg.p4),
-    ...shuffleWithRng(p3, rng).slice(0, cfg.p3),
-    ...shuffleWithRng(p2, rng).slice(0, cfg.p2),
-    ...shuffleWithRng(p1, rng).slice(0, cfg.p1),
+function clonePieceSet(pieces: Piece[]) {
+  return pieces.map((piece) => ({
+    ...piece,
+    shape: piece.shape.map((point) => ({ ...point })),
+  }));
+}
+
+function cloneSolvablePoolEntry(entry: SolvablePoolEntry): SolvablePoolEntry {
+  return {
+    ...entry,
+    pieces: clonePieceSet(entry.pieces),
+  };
+}
+
+function buildPuzzleFingerprint(cfg: LevelConfig, pieces: Piece[]) {
+  const sortedIds = pieces.map((piece) => piece.id).sort().join(',');
+  return `${cfg.id}:${sortedIds}`;
+}
+
+function normalizeRecentPuzzleFingerprints(input: unknown) {
+  if (!Array.isArray(input)) return [];
+  const unique: string[] = [];
+  for (const value of input) {
+    if (typeof value !== 'string') continue;
+    const normalized = value.trim().slice(0, 120);
+    if (!normalized) continue;
+    if (unique.includes(normalized)) continue;
+    unique.push(normalized);
+  }
+  return unique.slice(-RECENT_PUZZLE_HISTORY_LIMIT);
+}
+
+function appendRecentPuzzleFingerprint(current: string[], fingerprint: string) {
+  const filtered = current.filter((value) => value !== fingerprint);
+  filtered.push(fingerprint);
+  return filtered.slice(-RECENT_PUZZLE_HISTORY_LIMIT);
+}
+
+function createChallengePiecePicker(cfg: LevelConfig, random: () => number) {
+  const p4 = ALL_PIECES.filter((piece) => piece.shape.length === 4);
+  const p3 = ALL_PIECES.filter((piece) => piece.shape.length === 3);
+  const p2 = ALL_PIECES.filter((piece) => piece.shape.length === 2);
+  const p1 = ALL_PIECES.filter((piece) => piece.shape.length === 1);
+
+  return () => [
+    ...shuffleWithRng(p4, random).slice(0, cfg.p4),
+    ...shuffleWithRng(p3, random).slice(0, cfg.p3),
+    ...shuffleWithRng(p2, random).slice(0, cfg.p2),
+    ...shuffleWithRng(p1, random).slice(0, cfg.p1),
   ];
+}
 
-  for (let attempts = 0; attempts < 220; attempts += 1) {
-    const candidate = pickCandidates();
-    if (solveKatamino(board.width, board.height, candidate)) return candidate;
+function scorePieceMix(pieces: Piece[]) {
+  return pieces.reduce((sum, piece) => sum + (PIECE_DIFFICULTY_WEIGHT[piece.id] ?? 1), 0);
+}
+
+function estimateTargetDifficulty(cfg: LevelConfig) {
+  const progress = (cfg.id - 1) / Math.max(1, MAX_LEVEL - 1);
+  const board = getBoardDimensions(cfg);
+  const areaFactor = (board.width * board.height) / 36;
+  const mixFactor = scorePieceMix([
+    ...ALL_PIECES.filter((piece) => piece.shape.length === 4).slice(0, cfg.p4),
+    ...ALL_PIECES.filter((piece) => piece.shape.length === 3).slice(0, cfg.p3),
+    ...ALL_PIECES.filter((piece) => piece.shape.length === 2).slice(0, cfg.p2),
+    ...ALL_PIECES.filter((piece) => piece.shape.length === 1).slice(0, cfg.p1),
+  ]);
+
+  return 4 + progress * 28 + areaFactor * 4 + mixFactor * 0.35;
+}
+
+function scoreSolvedCandidate(cfg: LevelConfig, pieces: Piece[], searchNodes: number, deadRegionPrunes: number) {
+  const board = getBoardDimensions(cfg);
+  const aspectPenalty = Math.abs(board.width - board.height) * 0.12;
+  const pieceMixScore = scorePieceMix(pieces) * 1.35;
+  const searchScore = Math.log10(searchNodes + 1) * 8.5;
+  const pruneScore = Math.log10(deadRegionPrunes + 1) * 4.2;
+  return pieceMixScore + searchScore + pruneScore + aspectPenalty;
+}
+
+function getPrecomputedLevelPool(cfg: LevelConfig) {
+  if (precomputedLevelPoolCache.has(cfg.id)) {
+    return precomputedLevelPoolCache.get(cfg.id)!.map(cloneSolvablePoolEntry);
   }
 
-  return pickCandidates();
+  const board = getBoardDimensions(cfg);
+  const targetDifficulty = estimateTargetDifficulty(cfg);
+  const rng = createSeededRng(`pool:v1:${cfg.id}`);
+  const pickCandidates = createChallengePiecePicker(cfg, rng);
+  const solvedByFingerprint = new Map<string, SolvablePoolEntry>();
+
+  for (
+    let attempt = 0;
+    attempt < PRECOMPUTED_POOL_MAX_ATTEMPTS && solvedByFingerprint.size < PRECOMPUTED_POOL_SOLVED_TARGET;
+    attempt += 1
+  ) {
+    const candidate = pickCandidates();
+    const fingerprint = buildPuzzleFingerprint(cfg, candidate);
+    if (solvedByFingerprint.has(fingerprint)) continue;
+    const analysis = analyzeKatamino(board.width, board.height, candidate);
+    if (!analysis.solution) continue;
+
+    const difficultyScore = scoreSolvedCandidate(
+      cfg,
+      candidate,
+      analysis.searchNodes,
+      analysis.deadRegionPrunes,
+    );
+    const distanceToTarget = Math.abs(difficultyScore - targetDifficulty);
+    solvedByFingerprint.set(fingerprint, {
+      pieces: clonePieceSet(candidate),
+      fingerprint,
+      difficultyScore,
+      distanceToTarget,
+    });
+  }
+
+  const pool = [...solvedByFingerprint.values()]
+    .sort((a, b) => {
+      if (a.distanceToTarget !== b.distanceToTarget) {
+        return a.distanceToTarget - b.distanceToTarget;
+      }
+      return a.fingerprint.localeCompare(b.fingerprint);
+    })
+    .slice(0, PRECOMPUTED_POOL_SIZE)
+    .map(cloneSolvablePoolEntry);
+
+  precomputedLevelPoolCache.set(cfg.id, pool.map(cloneSolvablePoolEntry));
+  return pool;
+}
+
+function pickPoolCandidate(
+  cfg: LevelConfig,
+  options?: {
+    seed?: string;
+    recentFingerprints?: Set<string>;
+    allowRecentFallback?: boolean;
+  },
+) {
+  const pool = getPrecomputedLevelPool(cfg);
+  if (pool.length === 0) return null;
+
+  const recentFingerprints = options?.recentFingerprints ?? new Set<string>();
+  const filtered = pool.filter((entry) => !recentFingerprints.has(entry.fingerprint));
+  const source = filtered.length > 0
+    ? filtered
+    : (options?.allowRecentFallback === false ? [] : pool);
+  if (source.length === 0) return null;
+
+  const sorted = [...source].sort((a, b) => {
+    if (a.distanceToTarget !== b.distanceToTarget) {
+      return a.distanceToTarget - b.distanceToTarget;
+    }
+    return a.fingerprint.localeCompare(b.fingerprint);
+  });
+  const topBand = sorted.slice(0, Math.min(6, sorted.length));
+  if (topBand.length === 0) return null;
+  const picker = options?.seed
+    ? createSeededRng(`pool-pick:${cfg.id}:${options.seed}`)
+    : Math.random;
+  const index = Math.floor(picker() * topBand.length);
+  return cloneSolvablePoolEntry(topBand[index]);
+}
+
+function findSolvablePieceSet(
+  cfg: LevelConfig,
+  options?: {
+    cacheKey?: string;
+    seed?: string;
+    random?: () => number;
+    attemptsPerBatch?: number;
+    batchCount?: number;
+    recentFingerprints?: Set<string>;
+    noveltyPenalty?: number;
+  },
+) {
+  const board = getBoardDimensions(cfg);
+  const cacheKey = options?.cacheKey;
+  const attemptsPerBatch = options?.attemptsPerBatch ?? 140;
+  const batchCount = options?.seed ? (options?.batchCount ?? 8) : 1;
+  const targetDifficulty = estimateTargetDifficulty(cfg);
+  const maxSolvedCandidates = options?.seed ? 6 : 5;
+  const acceptableDistance = cfg.id <= 20 ? 4.5 : cfg.id <= 60 ? 3.25 : 2.5;
+  const recentFingerprints = options?.recentFingerprints ?? new Set<string>();
+  const noveltyPenalty = options?.noveltyPenalty ?? 8;
+
+  if (cacheKey && solvablePieceSetCache.has(cacheKey)) {
+    const pieces = clonePieceSet(solvablePieceSetCache.get(cacheKey)!);
+    return {
+      pieces,
+      fingerprint: buildPuzzleFingerprint(cfg, pieces),
+      difficultyScore: 0,
+      distanceToTarget: 0,
+    };
+  }
+
+  let bestCandidate: SolvablePoolEntry | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let solvedCandidates = 0;
+
+  for (let batch = 0; batch < batchCount; batch += 1) {
+    const random = options?.seed
+      ? createSeededRng(`${options.seed}:${cfg.id}:batch:${batch}`)
+      : (options?.random ?? Math.random);
+    const pickCandidates = createChallengePiecePicker(cfg, random);
+
+    for (let attempts = 0; attempts < attemptsPerBatch; attempts += 1) {
+      const candidate = pickCandidates();
+      const analysis = analyzeKatamino(board.width, board.height, candidate);
+      if (analysis.solution) {
+        solvedCandidates += 1;
+        const difficultyScore = scoreSolvedCandidate(
+          cfg,
+          candidate,
+          analysis.searchNodes,
+          analysis.deadRegionPrunes,
+        );
+        const fingerprint = buildPuzzleFingerprint(cfg, candidate);
+        const noveltyBoost = recentFingerprints.has(fingerprint) ? noveltyPenalty : 0;
+        const distance = Math.abs(difficultyScore - targetDifficulty) + noveltyBoost;
+
+        if (distance < bestDistance) {
+          bestCandidate = {
+            pieces: clonePieceSet(candidate),
+            fingerprint,
+            difficultyScore,
+            distanceToTarget: distance,
+          };
+          bestDistance = distance;
+        }
+
+        if (distance <= acceptableDistance || solvedCandidates >= maxSolvedCandidates) {
+          if (bestCandidate) {
+            if (cacheKey) {
+              solvablePieceSetCache.set(cacheKey, clonePieceSet(bestCandidate.pieces));
+            }
+            return cloneSolvablePoolEntry(bestCandidate);
+          }
+        }
+      }
+    }
+  }
+
+  if (bestCandidate) {
+    if (cacheKey) {
+      solvablePieceSetCache.set(cacheKey, clonePieceSet(bestCandidate.pieces));
+    }
+    return cloneSolvablePoolEntry(bestCandidate);
+  }
+
+  throw new Error(`Unable to generate a solvable puzzle for level ${cfg.id}.`);
+}
+
+function generateChallengePieces(seed: string, cfg: LevelConfig) {
+  const challengeFromPool = pickPoolCandidate(cfg, {
+    seed,
+    allowRecentFallback: true,
+  });
+  if (challengeFromPool) return challengeFromPool;
+  return findSolvablePieceSet(cfg, {
+    cacheKey: `challenge:${cfg.id}:${seed}`,
+    seed,
+    attemptsPerBatch: 160,
+    batchCount: 10,
+  });
+}
+
+function selectSinglePlayerPuzzle(cfg: LevelConfig, recentHistory: string[]) {
+  const recentFingerprints = new Set(recentHistory);
+  const fromPool = pickPoolCandidate(cfg, {
+    recentFingerprints,
+    allowRecentFallback: false,
+  });
+  if (fromPool) return fromPool;
+
+  return findSolvablePieceSet(cfg, {
+    random: Math.random,
+    attemptsPerBatch: 260,
+    batchCount: 2,
+    recentFingerprints,
+    noveltyPenalty: 12,
+  });
 }
 
 function readLocalCompletedLevels() {
@@ -434,6 +722,15 @@ function readLocalLastLevel() {
     return Math.max(1, Math.min(MAX_LEVEL, Math.floor(raw)));
   } catch {
     return 1;
+  }
+}
+
+function readLocalRecentPuzzleFingerprints() {
+  try {
+    const saved = localStorage.getItem(RECENT_PUZZLE_HISTORY_KEY);
+    return normalizeRecentPuzzleFingerprints(saved ? JSON.parse(saved) : []);
+  } catch {
+    return [];
   }
 }
 
@@ -2535,6 +2832,9 @@ export default function App() {
 
   const [bestTimes, setBestTimes] = useState<Record<number, number>>({});
   const [playerStats, setPlayerStats] = useState<PlayerStats>({ ...DEFAULT_PLAYER_STATS });
+  const [recentPuzzleFingerprints, setRecentPuzzleFingerprints] = useState<string[]>(
+    () => readLocalRecentPuzzleFingerprints(),
+  );
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const showToast = useCallback((message: string, tone: ToastTone = 'neutral') => {
@@ -2667,12 +2967,14 @@ export default function App() {
     bestTimes: Record<number, number>;
     playerStats: PlayerStats;
     lastLevel: number;
+    recentPuzzleFingerprints?: string[];
   }) => {
     const normalizedLastLevel = Math.min(MAX_LEVEL, Math.max(1, payload.lastLevel));
     const nextCompleted = new Set<number>(payload.completedLevels);
     setCompletedLevels(nextCompleted);
     setBestTimes(payload.bestTimes);
     setPlayerStats(payload.playerStats);
+    setRecentPuzzleFingerprints(normalizeRecentPuzzleFingerprints(payload.recentPuzzleFingerprints ?? []));
     setSinglePlayerLevel(normalizedLastLevel);
     if (gameMode !== 'multiplayer') {
       setLevel(normalizedLastLevel);
@@ -2684,6 +2986,7 @@ export default function App() {
     localStorage.removeItem(LOCAL_BEST_TIMES_KEY);
     localStorage.removeItem(LOCAL_PLAYER_STATS_KEY);
     localStorage.removeItem(LOCAL_LAST_LEVEL_KEY);
+    localStorage.removeItem(RECENT_PUZZLE_HISTORY_KEY);
   }, []);
 
   const resetProgressToDefaults = useCallback(() => {
@@ -2701,6 +3004,7 @@ export default function App() {
       bestTimes: cloudPayload.bestTimes,
       playerStats: cloudPayload.playerStats,
       lastLevel: cloudPayload.lastLevel,
+      recentPuzzleFingerprints: cloudPayload.recentPuzzleFingerprints,
     };
     // Account progress must be isolated per user. Do not auto-merge local device data.
     applyMergedProgress(isolated);
@@ -2794,6 +3098,7 @@ export default function App() {
       setMatchSnapshot(null);
       setHasSubmittedMatchResult(false);
       setMultiplayerLockedUntil(null);
+      setRecentPuzzleFingerprints([]);
       resetProgressToDefaults();
       clearLegacyLocalProgress();
       showToast('Signed out. Progress reset to Level 1 on this device.', 'neutral');
@@ -2924,6 +3229,14 @@ export default function App() {
     root.classList.toggle('dark', resolvedTheme === 'dark');
     root.style.colorScheme = resolvedTheme;
   }, [themeMode, resolvedTheme]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(RECENT_PUZZLE_HISTORY_KEY, JSON.stringify(recentPuzzleFingerprints));
+    } catch {
+      // no-op
+    }
+  }, [recentPuzzleFingerprints]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -3086,6 +3399,7 @@ export default function App() {
         bestTimes,
         playerStats,
         lastLevel: singlePlayerLevel,
+        recentPuzzleFingerprints,
       })
         .catch((error) => {
           setAuthError(authErrorToMessage(error));
@@ -3100,7 +3414,7 @@ export default function App() {
         window.clearTimeout(cloudSyncTimeoutRef.current);
       }
     };
-  }, [authUser, cloudReady, completedLevels, bestTimes, playerStats, singlePlayerLevel, gameMode]);
+  }, [authUser, cloudReady, completedLevels, bestTimes, playerStats, singlePlayerLevel, recentPuzzleFingerprints, gameMode]);
 
   async function launchMultiplayerRoundFromSnapshot(snapshot: MultiplayerRoomSnapshot) {
     const round = snapshot.activeRound;
@@ -3372,57 +3686,32 @@ export default function App() {
 
     await new Promise(resolve => setTimeout(resolve, 50));
 
-    let solvablePieces: Piece[] = [];
-    if (mode === 'multiplayer' && options?.puzzleSeed) {
-      solvablePieces = generateChallengePieces(options.puzzleSeed, cfg);
-    } else {
-      let attempts = 0;
-      const maxAttempts = 100;
-
-      const p4 = ALL_PIECES.filter(p => p.shape.length === 4);
-      const p3 = ALL_PIECES.filter(p => p.shape.length === 3);
-      const p2 = ALL_PIECES.filter(p => p.shape.length === 2);
-      const p1 = ALL_PIECES.filter(p => p.shape.length === 1);
-
-      const board = getBoardDimensions(cfg);
-      const currentWidth = board.width;
-      const currentHeight = board.height;
-
-      const pickCandidates = () => [
-        ...[...p4].sort(() => Math.random() - 0.5).slice(0, cfg.p4),
-        ...[...p3].sort(() => Math.random() - 0.5).slice(0, cfg.p3),
-        ...[...p2].sort(() => Math.random() - 0.5).slice(0, cfg.p2),
-        ...[...p1].sort(() => Math.random() - 0.5).slice(0, cfg.p1),
-      ];
-
-      while (attempts < maxAttempts) {
-        const candidatePieces = pickCandidates();
-        const solution = solveKatamino(currentWidth, currentHeight, candidatePieces);
-        if (solution) {
-          solvablePieces = candidatePieces;
-          break;
-        }
-        attempts++;
+    let selectedPuzzle: SolvablePoolEntry | null = null;
+    try {
+      if (mode === 'multiplayer' && options?.puzzleSeed) {
+        selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg);
+      } else {
+        selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints);
       }
-
-      if (solvablePieces.length === 0) {
-        let fallback: Piece[] | null = null;
-        for (let i = 0; i < 200 && !fallback; i++) {
-          const cands = pickCandidates();
-          if (solveKatamino(currentWidth, currentHeight, cands)) fallback = cands;
-        }
-        solvablePieces = fallback ?? pickCandidates();
-      }
+    } catch (error) {
+      console.error('puzzle generation failed', error);
+      setIsGenerating(false);
+      setIsActive(false);
+      setErrorMessage('We could not generate a valid puzzle for this level. Please try again.');
+      return;
     }
 
     setAvailablePieces(
-      solvablePieces.map((piece) => ({
+      selectedPuzzle.pieces.map((piece) => ({
         ...piece,
         shape: orientShapeForStash(piece.shape),
       })),
     );
+    if (mode === 'single') {
+      setRecentPuzzleFingerprints((prev) => appendRecentPuzzleFingerprint(prev, selectedPuzzle.fingerprint));
+    }
     setIsGenerating(false);
-  }, [level, updatePlayerStats]);
+  }, [level, updatePlayerStats, recentPuzzleFingerprints]);
 
   useEffect(() => {
     if (!isMultiplayerRound || multiplayerLockedUntil === null) return;

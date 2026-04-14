@@ -301,13 +301,29 @@ function sanitizePlayerStats(input) {
   };
 }
 
+function sanitizeRecentPuzzleFingerprints(input) {
+  if (!Array.isArray(input)) return [];
+  const unique = [];
+  const seen = new Set();
+  for (const item of input) {
+    if (typeof item !== 'string') continue;
+    const value = item.trim().slice(0, 120);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    unique.push(value);
+  }
+  const MAX_HISTORY = 36;
+  return unique.slice(-MAX_HISTORY);
+}
+
 function sanitizeProgress(input) {
   const safe = input && typeof input === 'object' ? input : {};
   const completedLevels = sanitizeCompletedLevels(safe.completedLevels);
   const bestTimes = sanitizeBestTimes(safe.bestTimes);
   const playerStats = sanitizePlayerStats(safe.playerStats);
   const lastLevel = Math.min(MAX_LEVEL, Math.max(1, toSafeInt(safe.lastLevel, 1)));
-  return { completedLevels, bestTimes, playerStats, lastLevel };
+  const recentPuzzleFingerprints = sanitizeRecentPuzzleFingerprints(safe.recentPuzzleFingerprints);
+  return { completedLevels, bestTimes, playerStats, lastLevel, recentPuzzleFingerprints };
 }
 
 function sanitizeLevelId(input) {
@@ -939,6 +955,7 @@ function toProgressDto(row) {
       bestTimes: {},
       playerStats: sanitizePlayerStats({}),
       lastLevel: 1,
+      recentPuzzleFingerprints: [],
       updatedAt: null,
     };
   }
@@ -948,6 +965,7 @@ function toProgressDto(row) {
     bestTimes: sanitizeBestTimes(row.best_times),
     playerStats: sanitizePlayerStats(row.player_stats),
     lastLevel: Math.min(100, Math.max(1, toSafeInt(row.last_level, 1))),
+    recentPuzzleFingerprints: sanitizeRecentPuzzleFingerprints(row.recent_puzzle_fingerprints),
     updatedAt: row.updated_at,
   };
 }
@@ -1564,13 +1582,14 @@ app.put('/api/progress', async (req, res) => {
 
   try {
     const saved = await pool.query(
-      `INSERT INTO user_progress (user_id, completed_levels, best_times, player_stats, last_level, updated_at)
-       VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5, NOW())
+      `INSERT INTO user_progress (user_id, completed_levels, best_times, player_stats, last_level, recent_puzzle_fingerprints, updated_at)
+       VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5, $6::jsonb, NOW())
        ON CONFLICT (user_id) DO UPDATE SET
          completed_levels = EXCLUDED.completed_levels,
          best_times = EXCLUDED.best_times,
          player_stats = EXCLUDED.player_stats,
          last_level = EXCLUDED.last_level,
+         recent_puzzle_fingerprints = EXCLUDED.recent_puzzle_fingerprints,
          updated_at = NOW()
        RETURNING *`,
       [
@@ -1579,6 +1598,7 @@ app.put('/api/progress', async (req, res) => {
         JSON.stringify(clean.bestTimes),
         JSON.stringify(clean.playerStats),
         clean.lastLevel,
+        JSON.stringify(clean.recentPuzzleFingerprints),
       ],
     );
     res.json({ progress: toProgressDto(saved.rows[0]) });

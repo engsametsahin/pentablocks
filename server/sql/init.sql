@@ -98,8 +98,12 @@ CREATE TABLE IF NOT EXISTS user_progress (
   best_times JSONB NOT NULL DEFAULT '{}'::jsonb,
   player_stats JSONB NOT NULL DEFAULT '{}'::jsonb,
   last_level INTEGER NOT NULL DEFAULT 1,
+  recent_puzzle_fingerprints JSONB NOT NULL DEFAULT '[]'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE user_progress
+  ADD COLUMN IF NOT EXISTS recent_puzzle_fingerprints JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS user_credentials (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
