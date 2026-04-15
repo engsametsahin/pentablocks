@@ -48,7 +48,16 @@ export function unlockAudio() {
 export function playSoundCue(cue: SoundCue) {
   const ctx = getAudioContext();
   if (!ctx) return;
-  if (ctx.state === 'suspended') return;
+  if (ctx.state === 'suspended') {
+    void ctx.resume().then(() => {
+      if (ctx.state === 'running') {
+        playSoundCue(cue);
+      }
+    }).catch(() => {
+      // Ignore blocked resume attempts; next user gesture can unlock audio.
+    });
+    return;
+  }
 
   const t0 = ctx.currentTime + 0.01;
 

@@ -42,6 +42,7 @@ const LOCAL_PLAYER_STATS_KEY = 'katamino-player-stats';
 const LOCAL_LAST_LEVEL_KEY = 'katamino-last-level';
 const RECENT_PUZZLE_HISTORY_KEY = 'pentablocks-recent-puzzles';
 const RECENT_PUZZLE_HISTORY_LIMIT = 36;
+const MOBILE_CONTROLS_HINT_SEEN_KEY = 'pentablocks-mobile-controls-hint-seen';
 const PRECOMPUTED_POOL_SIZE = 12;
 const PRECOMPUTED_POOL_SOLVED_TARGET = 24;
 const PRECOMPUTED_POOL_MAX_ATTEMPTS = 520;
@@ -1131,7 +1132,9 @@ function MenuScreen({
         transition={{ duration: 0.5 }}
         className="text-center mb-16"
       >
-        <h1 className="text-8xl font-black tracking-tighter mb-3 select-none">PENTABLOCKS</h1>
+        <h1 className="text-4xl sm:text-6xl md:text-8xl font-black tracking-tight md:tracking-tighter mb-3 select-none leading-none max-w-full">
+          PENTABLOCKS
+        </h1>
         <p className={cn(
           'uppercase tracking-[0.3em] text-xs font-bold',
           resolvedTheme === 'dark' ? 'text-gray-500' : 'text-gray-600',
@@ -3073,6 +3076,11 @@ export default function App() {
     () => readLocalRecentPuzzleFingerprints(),
   );
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const isMobileViewport = viewportWidth <= 640;
+  const isNewSinglePlayerProfile = completedLevels.size === 0
+    && Object.keys(bestTimes).length === 0
+    && singlePlayerLevel <= 1
+    && playerStats.gamesStarted <= 1;
 
   const showToast = useCallback((message: string, tone: ToastTone = 'neutral') => {
     const id = Date.now() + Math.random();
@@ -4031,15 +4039,33 @@ export default function App() {
     const onFirstInteract = () => {
       unlockAudio();
       window.removeEventListener('pointerdown', onFirstInteract);
+      window.removeEventListener('touchstart', onFirstInteract);
+      window.removeEventListener('mousedown', onFirstInteract);
       window.removeEventListener('keydown', onFirstInteract);
     };
     window.addEventListener('pointerdown', onFirstInteract, { once: true });
+    window.addEventListener('touchstart', onFirstInteract, { once: true, passive: true });
+    window.addEventListener('mousedown', onFirstInteract, { once: true });
     window.addEventListener('keydown', onFirstInteract, { once: true });
     return () => {
       window.removeEventListener('pointerdown', onFirstInteract);
+      window.removeEventListener('touchstart', onFirstInteract);
+      window.removeEventListener('mousedown', onFirstInteract);
       window.removeEventListener('keydown', onFirstInteract);
     };
   }, []);
+
+  useEffect(() => {
+    if (screen !== 'game' || gameMode !== 'single') return;
+    if (!isMobileViewport || !isNewSinglePlayerProfile) return;
+    try {
+      if (localStorage.getItem(MOBILE_CONTROLS_HINT_SEEN_KEY) === '1') return;
+      localStorage.setItem(MOBILE_CONTROLS_HINT_SEEN_KEY, '1');
+    } catch {
+      // Ignore localStorage access issues and still show the hint once this session.
+    }
+    showToast('Mobile tip: Tap selected piece to rotate. Press and hold to flip.', 'neutral');
+  }, [gameMode, isMobileViewport, isNewSinglePlayerProfile, screen, showToast]);
 
   useEffect(() => {
     if (!isMultiplayerLocked) {
@@ -4217,6 +4243,7 @@ export default function App() {
   }, [placedPieces, isShowingSolution, isGameOver, totalPiecesCount, gridWidth, gridHeight, targetCells, level, timeLeft, markLevelComplete, saveBestTime, updatePlayerStats, showToast, completedLevels, bestTimes, isFirstSession, gameMode, submitChallengeResult, isProMember]);
 
   const handleRotate = useCallback((id: string) => {
+    unlockAudio();
     setPlacedPieces((prev) => {
       if (!prev.some(p => p.id === id)) return prev;
       return prev.map((p) => p.id === id ? { ...p, currentShape: rotateShape(p.currentShape), rotation: (p.rotation + 90) % 360 } : p);
@@ -4236,6 +4263,7 @@ export default function App() {
   }, []);
 
   const handleFlip = useCallback((id: string) => {
+    unlockAudio();
     setPlacedPieces((prev) => {
       if (!prev.some(p => p.id === id)) return prev;
       return prev.map((p) => p.id === id ? { ...p, currentShape: flipShape(p.currentShape), isFlipped: !p.isFlipped } : p);
@@ -4811,6 +4839,19 @@ export default function App() {
     setScreen('game');
   }, [initGame, singlePlayerLevel]);
 
+  const handleMenuSinglePlayer = useCallback(() => {
+    unlockAudio();
+    const hasSinglePlayerProgress = completedLevels.size > 0
+      || Object.keys(bestTimes).length > 0
+      || singlePlayerLevel > 1
+      || playerStats.gamesStarted > 0;
+    if (!hasSinglePlayerProgress) {
+      startLevel(1);
+      return;
+    }
+    setScreen('levelSelect');
+  }, [bestTimes, completedLevels, playerStats.gamesStarted, singlePlayerLevel, startLevel]);
+
   const startChallengeGame = useCallback(async (snapshot: MultiplayerRoomSnapshot) => {
     const round = snapshot.activeRound;
     if (!round) return;
@@ -4907,7 +4948,7 @@ export default function App() {
         <MenuScreen
           onContinue={continueFromLastLevel}
           continueLevel={singlePlayerLevel}
-          onSinglePlayer={() => setScreen('levelSelect')}
+          onSinglePlayer={handleMenuSinglePlayer}
           onStats={() => setScreen('stats')}
           onMultiplayer={() => setScreen('multiplayer')}
           canOpenAdmin={Boolean(authUser?.isAdmin)}
@@ -5216,6 +5257,12 @@ export default function App() {
             <ul className="text-xs space-y-2 text-gray-300">
               <li className="flex gap-2"><span className="text-emerald-400 font-bold">01</span> Drag pieces to the grid</li>
               <li className="flex gap-2"><span className="text-emerald-400 font-bold">02</span> Select a piece to rotate/flip</li>
+              {isMobileViewport && isNewSinglePlayerProfile && (
+                <li className="flex gap-2">
+                  <span className="text-emerald-400 font-bold">Tip</span>
+                  Tap selected piece to rotate, press and hold to flip.
+                </li>
+              )}
               <li className="flex gap-2"><span className="text-emerald-400 font-bold">03</span> Fill the {gridWidth}x{gridHeight} area ({totalPiecesCount} pieces)</li>
             </ul>
           </div>
