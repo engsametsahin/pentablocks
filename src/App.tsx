@@ -3017,25 +3017,19 @@ export default function App() {
   const gridHeight = boardDimensions.height;
   const cellSize = getResponsiveCellSize(viewportWidth);
   const gridPadding = cellSize < CELL_SIZE ? 20 : GRID_PADDING;
-  // Stash uses smaller cells than the board so many pieces stay visible without scrolling.
-  // On mobile we further compress based on remaining vertical space.
+  // Stash defaults to board cell size; only shrinks when remaining vertical space genuinely demands it.
   const isMobileView = viewportWidth <= 640;
-  const baseStashRatio = isMobileView ? 0.72 : 0.85;
   const boardHeightPx = gridHeight * cellSize + gridPadding * 2;
-  // Reserve ~280px for header / level info / time / controls panel.
   const reservedChromePx = isMobileView ? 280 : 220;
   const availableStashPx = Math.max(80, viewportHeight - boardHeightPx - reservedChromePx);
-  // Estimate: each stash row is ~3 cells tall (worst case for tetrominoes).
-  // We try to keep all pieces visible within availableStashPx if possible.
   const totalStashPieces = availablePieces.length;
   const piecesPerRowEstimate = Math.max(2, Math.floor(viewportWidth / (cellSize * 3)));
   const estimatedRows = Math.ceil(totalStashPieces / piecesPerRowEstimate);
   const dynamicRowHeight = estimatedRows > 0 ? availableStashPx / estimatedRows : availableStashPx;
-  // 3 cells per row + some padding; back-solve cell size that fits.
   const heightConstrainedCellSize = Math.floor((dynamicRowHeight - 16) / 3);
   const stashCellSize = Math.max(
     isMobileView ? 18 : 22,
-    Math.min(Math.round(cellSize * baseStashRatio), heightConstrainedCellSize > 0 ? heightConstrainedCellSize : Math.round(cellSize * baseStashRatio))
+    heightConstrainedCellSize > 0 ? Math.min(cellSize, heightConstrainedCellSize) : cellSize
   );
   const targetCells = gridWidth * gridHeight;
   const totalPiecesCount = config.p4 + config.p3 + config.p2 + config.p1;
