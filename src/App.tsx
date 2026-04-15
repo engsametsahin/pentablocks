@@ -2925,6 +2925,7 @@ function ErrorModal({ message, onClose }: { message: string; onClose: () => void
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
+  const [viewportHeight, setViewportHeight] = useState(() => (typeof window === 'undefined' ? 900 : window.innerHeight));
   const [screen, setScreen] = useState<Screen>('menu');
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
@@ -3016,6 +3017,26 @@ export default function App() {
   const gridHeight = boardDimensions.height;
   const cellSize = getResponsiveCellSize(viewportWidth);
   const gridPadding = cellSize < CELL_SIZE ? 20 : GRID_PADDING;
+  // Stash uses smaller cells than the board so many pieces stay visible without scrolling.
+  // On mobile we further compress based on remaining vertical space.
+  const isMobileView = viewportWidth <= 640;
+  const baseStashRatio = isMobileView ? 0.72 : 0.85;
+  const boardHeightPx = gridHeight * cellSize + gridPadding * 2;
+  // Reserve ~280px for header / level info / time / controls panel.
+  const reservedChromePx = isMobileView ? 280 : 220;
+  const availableStashPx = Math.max(80, viewportHeight - boardHeightPx - reservedChromePx);
+  // Estimate: each stash row is ~3 cells tall (worst case for tetrominoes).
+  // We try to keep all pieces visible within availableStashPx if possible.
+  const totalStashPieces = availablePieces.length;
+  const piecesPerRowEstimate = Math.max(2, Math.floor(viewportWidth / (cellSize * 3)));
+  const estimatedRows = Math.ceil(totalStashPieces / piecesPerRowEstimate);
+  const dynamicRowHeight = estimatedRows > 0 ? availableStashPx / estimatedRows : availableStashPx;
+  // 3 cells per row + some padding; back-solve cell size that fits.
+  const heightConstrainedCellSize = Math.floor((dynamicRowHeight - 16) / 3);
+  const stashCellSize = Math.max(
+    isMobileView ? 18 : 22,
+    Math.min(Math.round(cellSize * baseStashRatio), heightConstrainedCellSize > 0 ? heightConstrainedCellSize : Math.round(cellSize * baseStashRatio))
+  );
   const targetCells = gridWidth * gridHeight;
   const totalPiecesCount = config.p4 + config.p3 + config.p2 + config.p1;
   const isMultiplayerRound = gameMode === 'multiplayer' && activeChallenge !== null;
@@ -3459,7 +3480,10 @@ export default function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const onResize = () => setViewportWidth(window.innerWidth);
+    const onResize = () => {
+      setViewportWidth(window.innerWidth);
+      setViewportHeight(window.innerHeight);
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
@@ -4436,23 +4460,23 @@ export default function App() {
       isDraggingRef.current = true;
       setDraggedPiece({ id, offset: { x: offsetX, y: offsetY } });
     } else {
-      // Stash pieces: the slot wrapper is larger than the shape and centres the
-      // piece inside it.  We need the offset relative to the piece's (0,0) cell,
-      // NOT the slot wrapper, otherwise the piece jumps when it transitions from
-      // the centred stash layout to the placed-piece layout (which has no centering).
+      // Stash pieces: rendered at stashCellSize but transition to board cellSize
+      // when picked up. We compute the offset relative to the piece's (0,0) cell
+      // in stash coordinates, then scale to board coordinates so the finger lands
+      // on the same RELATIVE position of the (now larger) piece.
       const p = availablePieces.find((piece) => piece.id === id);
       if (!p) return;
 
-      // Compute centering offset the same way the stash renderer does.
-      const footprint = PIECE_MAX_FOOTPRINT[id] ?? { width: 1, height: 1 };
-      const shapeSize = getShapeSize(p.shape);
-      const centerOffsetX = Math.max(0, Math.floor((footprint.width * cellSize - shapeSize.width * cellSize) / 2));
-      const centerOffsetY = Math.max(0, Math.floor((footprint.height * cellSize - shapeSize.height * cellSize) / 2));
-
+      const wrapperPaddingStash = Math.max(3, Math.round(stashCellSize * 0.14));
       const rect = target.getBoundingClientRect();
-      // Offset from the piece's first cell, not the slot edge
-      const offsetX = clientX - rect.left - centerOffsetX;
-      const offsetY = clientY - rect.top - centerOffsetY;
+      // Position within the stash slot (origin at slot top-left), then subtract
+      // the slot's own padding so we get coordinates relative to the piece's (0,0) cell.
+      const stashLocalX = clientX - rect.left - wrapperPaddingStash;
+      const stashLocalY = clientY - rect.top - wrapperPaddingStash;
+      // Scale stash-space coordinates to board-space (piece grows from stashCellSize → cellSize).
+      const scale = cellSize / stashCellSize;
+      const offsetX = stashLocalX * scale;
+      const offsetY = stashLocalY * scale;
       dragOffsetRef.current = { x: offsetX, y: offsetY };
       dragStartRef.current = { x: clientX, y: clientY, id, isFromGrid, target, pointerId };
       isDraggingRef.current = true;
@@ -5364,15 +5388,18 @@ export default function App() {
                   )}>Click or drag to start!</p>
                 )}
               </div>
-              <div className="flex flex-wrap items-end justify-center gap-x-4 gap-y-3 px-2">
+              <div
+                className="flex flex-wrap items-end justify-center gap-x-4 gap-y-3 px-2 overflow-y-auto overscroll-contain"
+                style={{ maxHeight: availableStashPx }}
+              >
                 {stashRenderOrder.map((pieceId) => {
                   const piece = availableById.get(pieceId);
                   const slotPiece = piece ?? pieceById.get(pieceId);
                   if (!slotPiece) return null;
                   const shapeSize = getShapeSize(slotPiece.shape);
-                  const wrapperPadding = Math.max(4, Math.round(cellSize * 0.16));
-                  const wrapperWidth = shapeSize.width * cellSize + wrapperPadding * 2;
-                  const wrapperHeight = shapeSize.height * cellSize + wrapperPadding * 2;
+                  const wrapperPadding = Math.max(3, Math.round(stashCellSize * 0.14));
+                  const wrapperWidth = shapeSize.width * stashCellSize + wrapperPadding * 2;
+                  const wrapperHeight = shapeSize.height * stashCellSize + wrapperPadding * 2;
 
                   if (!piece) {
                     return (
@@ -5400,9 +5427,9 @@ export default function App() {
                           key={`${piece.id}-stash-${i}`}
                           style={blockCellStyle(
                             piece.color,
-                            cellSize,
-                            wrapperPadding + cell.x * cellSize,
-                            wrapperPadding + cell.y * cellSize,
+                            stashCellSize,
+                            wrapperPadding + cell.x * stashCellSize,
+                            wrapperPadding + cell.y * stashCellSize,
                           )}
                         />
                       ))}
