@@ -3,7 +3,12 @@
     "allow": [
       "Bash(npx tsc:*)",
       "Bash(npx vite:*)",
-      "Bash(node -e ':*)"
+      "Bash(node -e ':*)",
+      "Bash(node scripts/validate-levels.mjs)",
+      "Bash(npx tsx *)",
+      "Bash(type \"g:\\\\\\\\Proje\\\\\\\\Katamino\\\\\\\\src\\\\\\\\constants.ts\")",
+      "Bash(findstr \"PENTOMINO\")",
+      "Bash(npm run *)"
     ],
     "defaultMode": "bypassPermissions"
   }

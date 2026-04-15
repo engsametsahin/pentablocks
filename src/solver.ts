@@ -37,9 +37,12 @@ function cloneSolveAnalysis(analysis: Omit<SolveAnalysis, 'cacheHit'>, cacheHit:
   };
 }
 
-function buildSolveCacheKey(width: number, height: number, pieces: Piece[]) {
+function buildSolveCacheKey(width: number, height: number, pieces: Piece[], blockedCells?: [number, number][]) {
   const ids = pieces.map((piece) => piece.id).sort().join(',');
-  return `${width}x${height}:${ids}`;
+  const blockedSuffix = blockedCells && blockedCells.length > 0
+    ? ':b:' + [...blockedCells].sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(([r, c]) => `${r},${c}`).join(';')
+    : '';
+  return `${width}x${height}:${ids}${blockedSuffix}`;
 }
 
 /**
@@ -81,21 +84,34 @@ function normalizeShape(shape: Point[]): Point[] {
 
 /**
  * Solves the Katamino puzzle using backtracking.
+ * @param blockedCells - Optional list of [row, col] pairs that are pre-filled (void cells in irregular grids).
  */
 export function analyzeKatamino(
   width: number,
   height: number,
-  pieces: Piece[]
+  pieces: Piece[],
+  blockedCells?: [number, number][]
 ): SolveAnalysis {
-  const cacheKey = buildSolveCacheKey(width, height, pieces);
+  const cacheKey = buildSolveCacheKey(width, height, pieces, blockedCells);
   if (solutionCache.has(cacheKey)) {
     return cloneSolveAnalysis(solutionCache.get(cacheKey)!, true);
   }
 
   const grid = Array.from({ length: height }, () => Array(width).fill(false));
+
+  // Pre-fill blocked (void) cells so the solver treats them as occupied
+  const blockedCount = blockedCells ? blockedCells.length : 0;
+  if (blockedCells) {
+    for (const [r, c] of blockedCells) {
+      if (r >= 0 && r < height && c >= 0 && c < width) {
+        grid[r][c] = true;
+      }
+    }
+  }
+
   const result: SolvedPiece[] = [];
 
-  const totalCellsToFill = width * height;
+  const totalCellsToFill = width * height - blockedCount;
   const totalPieceCells = pieces.reduce((sum, p) => sum + p.shape.length, 0);
 
   if (totalPieceCells !== totalCellsToFill) {
@@ -290,7 +306,8 @@ export function analyzeKatamino(
 export function solveKatamino(
   width: number,
   height: number,
-  pieces: Piece[]
+  pieces: Piece[],
+  blockedCells?: [number, number][]
 ): SolvedPiece[] | null {
-  return analyzeKatamino(width, height, pieces).solution;
+  return analyzeKatamino(width, height, pieces, blockedCells).solution;
 }

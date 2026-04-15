@@ -19,7 +19,11 @@ For any level `L`:
 1. ✅ The game must never present an unsolved puzzle to the player.
 2. ✅ Generation runs a 3-stage pipeline: pool → live random → exhaustive brute-force.
 3. ✅ The exhaustive fallback tries ALL valid piece combinations (bounded, max ~70 combos).
-4. ✅ If a level config has zero solvable combinations, it cannot ship (build-time validation).
+4. ✅ If a level config has zero solvable combinations, it cannot ship — `npm run build` runs
+   `scripts/validate-levels.ts` via the `prebuild` hook and aborts on any failure
+   (unsolvable, duplicate, cell-equation mismatch, or piece-limit violation).
+5. ✅ Single source of truth for level data: [src/level-data.ts](src/level-data.ts).
+   Both runtime and validator import from it.
 
 Player-facing guarantee:
 - The selected level always opens with a valid, solvable puzzle.
@@ -52,6 +56,15 @@ Each level config must pass (verified for all 100 levels):
 2. Piece limits: `p4 ≤ 7, p3 ≤ 2, p2 ≤ 1, p1 ≤ 1`
 3. Uniqueness: no duplicate `(w, h, p4, p3, p2, p1)` across all levels
 4. Solvability: at least one valid piece combination solves the board
+
+### Parity caveat (T-tetromino)
+
+T4 always covers 3+1 on a checkerboard (parity-odd); the other 6 tetrominoes are 2+2 (even).
+When `p4 = 7`, T4 is forced (only 7 tetrominoes exist), so parity-even boards (e.g. 7×4, 5×6, 6×5)
+get a ±1 mismatch that no piece combination can repair → the config is mathematically unsolvable.
+
+Avoid `(7,0,0,0)` on parity-even boards and `(7,0,1,0)` on (15,15)-balanced boards.
+Always run `scripts/validate-levels.mjs` after editing `LEVEL_CONFIGS`.
 
 ---
 

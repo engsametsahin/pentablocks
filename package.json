@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite --host=0.0.0.0 --port=3020",
     "server:dev": "tsx server/index.mjs",
+    "validate:levels": "tsx scripts/validate-levels.ts",
+    "prebuild": "npm run validate:levels",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",

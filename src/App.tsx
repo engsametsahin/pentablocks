@@ -6,7 +6,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RotateCw, FlipHorizontal, RefreshCw, Trophy, Timer, ChevronRight, ChevronLeft, Lock, Users, User, Star, BarChart3, Target, Zap, Medal, Link2, Copy } from 'lucide-react';
-import { ALL_PIECES, Piece, Point, rotateShape, flipShape } from './constants';
+import { ALL_PIECES, PENTOMINOES, Piece, Point, rotateShape, flipShape } from './constants';
+import { LEVEL_DATA, LEVEL_P5, LEVEL_BLOCKED } from './level-data';
 import { analyzeKatamino, solveKatamino } from './solver';
 import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
@@ -108,6 +109,8 @@ interface LevelConfig {
   p3: number;
   p2: number;
   p1: number;
+  p5: number;
+  blockedCells: [number, number][];
   label: string;
 }
 
@@ -192,65 +195,23 @@ const DIFFICULTY_BANDS: Array<{ name: string; range: [number, number] }> = [
 ];
 
 const LEVEL_CONFIGS: LevelConfig[] = (() => {
-  // [w, h, p4, p3, p2, p1, timeSeconds]
-  const data: [number,number,number,number,number,number,number][] = [
-    // ── Tier 1 — Spark (1-10): 8-14 cells ──
-    [2,4, 2,0,0,0, 180],  [3,3, 2,0,0,1, 170],  [2,5, 2,0,1,0, 160],
-    [2,5, 1,2,0,0, 150],  [3,4, 3,0,0,0, 145],  [4,3, 3,0,0,0, 140],
-    [2,6, 3,0,0,0, 135],  [3,4, 2,1,0,1, 130],  [2,7, 3,0,1,0, 125],
-    [2,7, 2,2,0,0, 120],
-    // ── Tier 2 — Flame (11-20): 12-16 cells ──
-    [4,3, 2,1,0,1, 140],  [2,6, 2,1,0,1, 135],  [2,7, 2,1,1,1, 130],
-    [3,5, 3,1,0,0, 125],  [5,3, 3,1,0,0, 122],  [3,5, 3,0,1,1, 118],
-    [3,5, 2,2,0,1, 114],  [4,4, 4,0,0,0, 110],  [4,4, 3,1,0,1, 106],
-    [4,4, 2,2,1,0, 100],
-    // ── Tier 3 — Ember (21-30): 16-18 cells ──
-    [2,8, 4,0,0,0, 120],  [2,8, 3,1,0,1, 116],  [2,8, 2,2,1,0, 112],
-    [3,6, 4,0,1,0, 108],  [3,6, 3,2,0,0, 104],  [6,3, 4,0,1,0, 100],
-    [3,6, 3,1,1,1, 96],   [2,9, 4,0,1,0, 92],   [2,9, 3,2,0,0, 88],
-    [6,3, 3,2,0,0, 85],
-    // ── Tier 4 — Blaze (31-40): 20-21 cells ──
-    [4,5, 5,0,0,0, 100],  [5,4, 5,0,0,0, 96],   [4,5, 4,1,0,1, 92],
-    [4,5, 3,2,1,0, 88],   [5,4, 4,1,0,1, 85],   [5,4, 3,2,1,0, 82],
-    [3,7, 5,0,0,1, 80],   [3,7, 4,1,1,0, 78],   [3,7, 3,2,1,1, 75],
-    [7,3, 5,0,0,1, 72],
-    // ── Tier 5 — Storm (41-50): 21-25 cells ──
-    [7,3, 4,1,1,0, 90],   [7,3, 3,2,1,1, 86],   [4,6, 6,0,0,0, 82],
-    [6,4, 6,0,0,0, 80],   [3,8, 6,0,0,0, 78],   [4,6, 5,1,0,1, 76],
-    [4,6, 4,2,1,0, 74],   [6,4, 5,1,0,1, 72],   [5,5, 6,0,0,1, 70],
-    [5,5, 5,1,1,0, 68],
-    // ── Tier 6 — Thunder (51-60): 24-28 cells ──
-    [6,4, 4,2,1,0, 80],   [3,8, 5,1,0,1, 76],   [3,8, 4,2,1,0, 73],
-    [5,5, 4,2,1,1, 70],   [3,9, 6,1,0,0, 68],   [3,9, 6,0,1,1, 66],
-    [3,9, 5,2,0,1, 64],   [4,7, 6,1,0,1, 62],   [3,10, 6,2,0,0, 60],
-    [4,7, 5,2,1,0, 58],
-    // ── Tier 7 — Cyclone (61-70): 28-32 cells ──
-    [7,4, 7,0,0,0, 70],   [7,4, 6,1,0,1, 66],   [7,4, 5,2,1,0, 63],
-    [5,6, 7,0,1,0, 60],   [5,6, 6,2,0,0, 57],   [5,6, 6,1,1,1, 55],
-    [6,5, 7,0,1,0, 53],   [6,5, 6,2,0,0, 50],   [6,5, 6,1,1,1, 48],
-    [4,8, 7,1,0,1, 46],
-    // ── Tier 8 — Titan (71-80): 24-35 cells (wide grids) ──
-    [4,8, 6,2,1,0, 58],   [8,3, 6,0,0,0, 55],   [8,3, 5,1,0,1, 52],
-    [8,3, 4,2,1,0, 50],   [9,3, 6,1,0,0, 48],   [9,3, 6,0,1,1, 46],
-    [9,3, 5,2,0,1, 44],   [8,4, 7,1,0,1, 42],   [8,4, 6,2,1,0, 40],
-    [5,7, 7,2,0,1, 38],
-    // ── Tier 9 — Legend (81-90): 35-36 cells + flat grids ──
-    [7,5, 7,2,0,1, 50],   [4,9, 7,2,1,0, 46],   [6,6, 7,2,1,0, 42],
-    [9,4, 7,2,1,0, 40],   [6,2, 3,0,0,0, 38],   [6,2, 2,1,0,1, 35],
-    [7,2, 3,0,1,0, 33],   [7,2, 2,2,0,0, 30],   [8,2, 4,0,0,0, 28],
-    [8,2, 3,1,0,1, 26],
-    // ── Tier 10 — Champion (91-100): unique combos + speedruns ──
-    [6,2, 1,2,1,0, 35],   [7,2, 2,1,1,1, 32],   [8,2, 2,2,1,0, 30],
-    [5,3, 3,0,1,1, 28],   [5,3, 2,2,0,1, 26],   [6,3, 3,1,1,1, 32],
-    [2,9, 3,1,1,1, 30],   [3,4, 1,2,1,0, 22],   [4,3, 1,2,1,0, 20],
-    [2,6, 1,2,1,0, 18],
-  ];
-
-  return data.map(([w, h, p4, p3, p2, p1, t], i) => {
+  return LEVEL_DATA.map(([w, h, p4, p3, p2, p1, t], i) => {
     const levelId = i + 1;
     const band = DIFFICULTY_BANDS.find((entry) => levelId >= entry.range[0] && levelId <= entry.range[1]) ?? DIFFICULTY_BANDS[DIFFICULTY_BANDS.length - 1];
     const sub = levelId - band.range[0] + 1;
-    return { id: levelId, width: w, height: h, p4, p3, p2, p1, timeSeconds: t, label: `${band.name} ${sub}` };
+    return {
+      id: levelId,
+      width: w,
+      height: h,
+      p4,
+      p3,
+      p2,
+      p1,
+      p5: LEVEL_P5[levelId] ?? 0,
+      blockedCells: LEVEL_BLOCKED[levelId] ?? [],
+      timeSeconds: t,
+      label: `${band.name} ${sub}`,
+    };
   });
 })();
 const MAX_LEVEL = LEVEL_CONFIGS.length; // 100
@@ -420,6 +381,19 @@ const PIECE_DIFFICULTY_WEIGHT: Record<string, number> = {
   L4: 1.25,
   S4: 1.45,
   Z4: 1.45,
+  // Pentominoes — all harder than tetrominoes; varies by orientation count
+  X5: 1.1,  // Plus sign: only 1 unique orientation (fully symmetric)
+  I5: 1.2,  // Straight: only 2 orientations
+  T5: 1.35, // T-shape: 4 orientations, symmetric
+  V5: 1.4,  // V / corner: 4 orientations
+  P5: 1.45, // 2×3 minus corner: 8 orientations (chiral)
+  W5: 1.5,  // Staircase: 4 orientations
+  L5: 1.5,  // Long L: 8 orientations (chiral)
+  U5: 1.55, // U: 4 orientations, tricky gap
+  F5: 1.6,  // F: 8 orientations (chiral), complex shape
+  N5: 1.6,  // N / skew: 8 orientations (chiral)
+  Y5: 1.6,  // Y: 8 orientations (chiral)
+  Z5: 1.65, // Z: 4 orientations, mirror-asymmetric pair
 };
 
 // ── Tier-based piece selection weights ──────────────────────────────────────
@@ -451,6 +425,20 @@ const PIECE_TIER_SELECTION_WEIGHT: Record<string, [number, number, number, numbe
   L3: [1.0, 1.5, 2.0, 2.5, 3.0],
   I2: [2.0, 2.0, 2.0, 2.0, 2.0],
   I1: [2.0, 2.0, 2.0, 2.0, 2.0],
+  // Pentominoes — appear only in Very Hard / Extreme tiers
+  // [Easy, Moderate, Hard, Very Hard, Extreme]
+  I5: [0.0, 0.0, 0.5, 2.0, 3.0],
+  X5: [0.0, 0.0, 0.5, 2.0, 2.5],
+  T5: [0.0, 0.0, 0.3, 1.5, 2.5],
+  V5: [0.0, 0.0, 0.3, 1.5, 2.5],
+  P5: [0.0, 0.0, 0.3, 1.5, 2.5],
+  W5: [0.0, 0.0, 0.2, 1.5, 2.5],
+  L5: [0.0, 0.0, 0.2, 1.5, 2.5],
+  U5: [0.0, 0.0, 0.2, 1.5, 2.5],
+  F5: [0.0, 0.0, 0.1, 1.2, 2.0],
+  N5: [0.0, 0.0, 0.1, 1.2, 2.0],
+  Y5: [0.0, 0.0, 0.1, 1.2, 2.0],
+  Z5: [0.0, 0.0, 0.1, 1.2, 2.0],
 };
 
 /** Get the selection weight for a piece at a given level. */
@@ -531,12 +519,14 @@ function createChallengePiecePicker(cfg: LevelConfig, random: () => number) {
   const p3 = ALL_PIECES.filter((piece) => piece.shape.length === 3);
   const p2 = ALL_PIECES.filter((piece) => piece.shape.length === 2);
   const p1 = ALL_PIECES.filter((piece) => piece.shape.length === 1);
+  const p5 = PENTOMINOES; // all 12 pentominoes
 
   return () => [
     ...weightedPickWithRng(p4, cfg.p4, cfg.id, random),
     ...weightedPickWithRng(p3, cfg.p3, cfg.id, random),
     ...weightedPickWithRng(p2, cfg.p2, cfg.id, random),
     ...weightedPickWithRng(p1, cfg.p1, cfg.id, random),
+    ...weightedPickWithRng(p5, cfg.p5, cfg.id, random),
   ];
 }
 
@@ -544,18 +534,42 @@ function scorePieceMix(pieces: Piece[]) {
   return pieces.reduce((sum, piece) => sum + (PIECE_DIFFICULTY_WEIGHT[piece.id] ?? 1), 0);
 }
 
+/**
+ * Returns the tier-weighted expected average difficulty of picking one piece
+ * from `pool` at a given level. Reflects the actual probability distribution
+ * used by `weightedPickWithRng` — easy pieces dominate early, hard late.
+ */
+function expectedPieceDifficulty(pool: Piece[], levelId: number): number {
+  if (pool.length === 0) return 0;
+  const totalWeight = pool.reduce((s, p) => s + getPieceSelectionWeight(p.id, levelId), 0);
+  if (totalWeight === 0) return 0;
+  return pool.reduce(
+    (s, p) => s + getPieceSelectionWeight(p.id, levelId) * (PIECE_DIFFICULTY_WEIGHT[p.id] ?? 1),
+    0,
+  ) / totalWeight;
+}
+
 function estimateTargetDifficulty(cfg: LevelConfig) {
   const progress = (cfg.id - 1) / Math.max(1, MAX_LEVEL - 1);
   const board = getBoardDimensions(cfg);
-  const areaFactor = (board.width * board.height) / 36;
-  const mixFactor = scorePieceMix([
-    ...ALL_PIECES.filter((piece) => piece.shape.length === 4).slice(0, cfg.p4),
-    ...ALL_PIECES.filter((piece) => piece.shape.length === 3).slice(0, cfg.p3),
-    ...ALL_PIECES.filter((piece) => piece.shape.length === 2).slice(0, cfg.p2),
-    ...ALL_PIECES.filter((piece) => piece.shape.length === 1).slice(0, cfg.p1),
-  ]);
+  const effectiveCells = board.width * board.height - cfg.blockedCells.length;
+  const areaFactor = effectiveCells / 36;
 
-  return 4 + progress * 28 + areaFactor * 4 + mixFactor * 0.35;
+  // Expected mix: each piece slot contributes the tier-weighted average difficulty
+  // of its piece pool. This tracks what weightedPickWithRng actually produces —
+  // early levels skew toward easy pieces, late levels toward hard ones.
+  const p4Pool = ALL_PIECES.filter((p) => p.shape.length === 4);
+  const p3Pool = ALL_PIECES.filter((p) => p.shape.length === 3);
+  const p2Pool = ALL_PIECES.filter((p) => p.shape.length === 2);
+  const p1Pool = ALL_PIECES.filter((p) => p.shape.length === 1);
+  const expectedMix =
+    cfg.p4 * expectedPieceDifficulty(p4Pool, cfg.id) +
+    cfg.p3 * expectedPieceDifficulty(p3Pool, cfg.id) +
+    cfg.p2 * expectedPieceDifficulty(p2Pool, cfg.id) +
+    cfg.p1 * expectedPieceDifficulty(p1Pool, cfg.id) +
+    cfg.p5 * expectedPieceDifficulty(PENTOMINOES, cfg.id);
+
+  return 4 + progress * 28 + areaFactor * 4 + expectedMix * 0.35;
 }
 
 function scoreSolvedCandidate(cfg: LevelConfig, pieces: Piece[], searchNodes: number, deadRegionPrunes: number) {
@@ -577,6 +591,7 @@ function getPrecomputedLevelPool(cfg: LevelConfig) {
   const rng = createSeededRng(`pool:v1:${cfg.id}`);
   const pickCandidates = createChallengePiecePicker(cfg, rng);
   const solvedByFingerprint = new Map<string, SolvablePoolEntry>();
+  const blocked = cfg.blockedCells.length > 0 ? cfg.blockedCells : undefined;
 
   for (
     let attempt = 0;
@@ -586,7 +601,7 @@ function getPrecomputedLevelPool(cfg: LevelConfig) {
     const candidate = pickCandidates();
     const fingerprint = buildPuzzleFingerprint(cfg, candidate);
     if (solvedByFingerprint.has(fingerprint)) continue;
-    const analysis = analyzeKatamino(board.width, board.height, candidate);
+    const analysis = analyzeKatamino(board.width, board.height, candidate, blocked);
     if (!analysis.solution) continue;
 
     const difficultyScore = scoreSolvedCandidate(
@@ -710,6 +725,7 @@ function findSolvablePieceSet(
   let bestDistance = Number.POSITIVE_INFINITY;
   let solvedCandidates = 0;
   let attemptsUsed = 0;
+  const blocked = cfg.blockedCells.length > 0 ? cfg.blockedCells : undefined;
 
   for (let batch = 0; batch < batchCount; batch += 1) {
     const random = options?.seed
@@ -720,7 +736,7 @@ function findSolvablePieceSet(
     for (let attempts = 0; attempts < attemptsPerBatch; attempts += 1) {
       attemptsUsed += 1;
       const candidate = pickCandidates();
-      const analysis = analyzeKatamino(board.width, board.height, candidate);
+      const analysis = analyzeKatamino(board.width, board.height, candidate, blocked);
       if (analysis.solution) {
         solvedCandidates += 1;
         const difficultyScore = scoreSolvedCandidate(
@@ -814,6 +830,8 @@ function exhaustiveSolvablePieceSet(cfg: LevelConfig): PuzzleSelectionResult | n
   const p3Pool = ALL_PIECES.filter((p) => p.shape.length === 3);
   const p2Pool = ALL_PIECES.filter((p) => p.shape.length === 2);
   const p1Pool = ALL_PIECES.filter((p) => p.shape.length === 1);
+  const p5Pool = PENTOMINOES;
+  const blocked = cfg.blockedCells.length > 0 ? cfg.blockedCells : undefined;
 
   function* combinations<T>(arr: T[], k: number): Generator<T[]> {
     if (k === 0) { yield []; return; }
@@ -832,23 +850,25 @@ function exhaustiveSolvablePieceSet(cfg: LevelConfig): PuzzleSelectionResult | n
     for (const c3 of combinations(p3Pool, cfg.p3)) {
       for (const c2 of combinations(p2Pool, cfg.p2)) {
         for (const c1 of combinations(p1Pool, cfg.p1)) {
-          const pieces = [...c4, ...c3, ...c2, ...c1];
-          const analysis = analyzeKatamino(board.width, board.height, pieces);
-          if (!analysis.solution) continue;
+          for (const c5 of combinations(p5Pool, cfg.p5)) {
+            const pieces = [...c4, ...c3, ...c2, ...c1, ...c5];
+            const analysis = analyzeKatamino(board.width, board.height, pieces, blocked);
+            if (!analysis.solution) continue;
 
-          const score = scoreSolvedCandidate(cfg, pieces, analysis.searchNodes, analysis.deadRegionPrunes);
-          const distance = Math.abs(score - targetDifficulty);
-          if (distance < bestDistance) {
-            bestDistance = distance;
-            best = {
-              entry: {
-                pieces: clonePieceSet(pieces),
-                fingerprint: buildPuzzleFingerprint(cfg, pieces),
-                difficultyScore: score,
-                distanceToTarget: distance,
-              },
-              telemetry: { source: 'exhaustive' as PuzzleGenerationTelemetry['source'], attemptsUsed: 0, solvedCandidates: 1, poolSize: 0, recentHistorySize: 0 },
-            };
+            const score = scoreSolvedCandidate(cfg, pieces, analysis.searchNodes, analysis.deadRegionPrunes);
+            const distance = Math.abs(score - targetDifficulty);
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              best = {
+                entry: {
+                  pieces: clonePieceSet(pieces),
+                  fingerprint: buildPuzzleFingerprint(cfg, pieces),
+                  difficultyScore: score,
+                  distanceToTarget: distance,
+                },
+                telemetry: { source: 'exhaustive' as PuzzleGenerationTelemetry['source'], attemptsUsed: 0, solvedCandidates: 1, poolSize: 0, recentHistorySize: 0 },
+              };
+            }
           }
         }
       }
@@ -3031,8 +3051,9 @@ export default function App() {
     isMobileView ? 18 : 22,
     heightConstrainedCellSize > 0 ? Math.min(cellSize, heightConstrainedCellSize) : cellSize
   );
-  const targetCells = gridWidth * gridHeight;
-  const totalPiecesCount = config.p4 + config.p3 + config.p2 + config.p1;
+  const targetCells = gridWidth * gridHeight - config.blockedCells.length;
+  const totalPiecesCount = config.p4 + config.p3 + config.p2 + config.p1 + config.p5;
+  const blockedCellSet = useMemo(() => new Set(config.blockedCells.map(([r, c]) => `${c},${r}`)), [config]);
   const isMultiplayerRound = gameMode === 'multiplayer' && activeChallenge !== null;
   const isMultiplayerLocked = isMultiplayerRound && multiplayerLockedUntil !== null && nowTs < multiplayerLockedUntil;
   const multiplayerCountdownSeconds = isMultiplayerLocked && multiplayerLockedUntil !== null
@@ -3062,9 +3083,9 @@ export default function App() {
     stashOrderRef.current = nextOrder;
   }, [availablePieces, placedPieces, totalPiecesCount, level]);
 
-  // Count only pieces fully inside the grid with no overlap
+  // Count only pieces fully inside the grid with no overlap and not on blocked cells
   const seatedPiecesCount = (() => {
-    const occupied = new Set<string>();
+    const occupied = new Set<string>(blockedCellSet); // blocked cells are pre-occupied
     let count = 0;
     for (const p of placedPieces) {
       const cells: string[] = [];
@@ -3843,7 +3864,7 @@ export default function App() {
     });
     if (allOutside) return null;
 
-    const tempOccupied = new Set<string>();
+    const tempOccupied = new Set<string>(blockedCellSet);
     for (const p of placedPieces) {
       if (p.id === draggedPiece.id) continue;
       for (const cell of p.currentShape) {
@@ -3858,7 +3879,7 @@ export default function App() {
       if (tempOccupied.has(`${x},${y}`)) return false;
     }
     return true;
-  }, [draggedPiece, placedPieces, gridWidth, gridHeight]);
+  }, [draggedPiece, placedPieces, gridWidth, gridHeight, blockedCellSet]);
 
   const initGame = useCallback(async (
     targetLevel?: number,
@@ -4200,7 +4221,7 @@ export default function App() {
   // Win condition
   useEffect(() => {
     if (placedPieces.length === totalPiecesCount && !isShowingSolution && !isGameOver && !isWin) {
-      const occupied = new Set<string>();
+      const occupied = new Set<string>(blockedCellSet); // pre-fill blocked cells to detect overlaps
       let allInBounds = true;
       let overlap = false;
 
@@ -4215,7 +4236,8 @@ export default function App() {
         });
       });
 
-      if (allInBounds && !overlap && occupied.size === targetCells) {
+      // occupied now includes blocked cells + piece cells; total must equal grid area
+      if (allInBounds && !overlap && occupied.size === gridWidth * gridHeight) {
         const previousBest = bestTimes[level];
         const isNewBest = previousBest === undefined || timeLeft > previousBest;
         const elapsedSeconds = Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000));
@@ -4780,7 +4802,7 @@ export default function App() {
         ...availablePieces,
         ...placedPieces.map((p) => ({ id: p.id, name: p.name, shape: p.shape, color: p.color })),
       ];
-      const solution = solveKatamino(gridWidth, gridHeight, allPieces);
+      const solution = solveKatamino(gridWidth, gridHeight, allPieces, config.blockedCells.length > 0 ? config.blockedCells : undefined);
       if (solution) {
         trackEvent('solution_shown', { level });
         setIsShowingSolution(true);
@@ -5308,9 +5330,19 @@ export default function App() {
                 height: gridHeight * cellSize,
               }}
             >
-              {Array.from({ length: targetCells }).map((_, i) => {
+              {Array.from({ length: gridWidth * gridHeight }).map((_, i) => {
                 const cx = i % gridWidth;
                 const cy = Math.floor(i / gridWidth);
+                const isBlocked = blockedCellSet.has(`${cx},${cy}`);
+                if (isBlocked) {
+                  return (
+                    <div
+                      key={`${cx},${cy}`}
+                      className={cn('border', resolvedTheme === 'dark' ? 'border-white/4 bg-black/60' : 'border-gray-300/30 bg-gray-400/30')}
+                      style={{ borderRadius: 4 }}
+                    />
+                  );
+                }
                 let highlight = '';
                 if (draggedPiece) {
                   const piece = placedPieces.find((p) => p.id === draggedPiece.id);
