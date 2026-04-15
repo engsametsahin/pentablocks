@@ -182,8 +182,15 @@ const ROOM_DIFFICULTY_OPTIONS: Array<{
 // Every level has a unique (width, height, p4, p3, p2, p1) combination.
 // Cell counts verified: p4*4 + p3*3 + p2*2 + p1*1 === width * height.
 // Piece pool limits: p4≤7, p3≤2, p2≤1, p1≤1.
+const DIFFICULTY_BANDS: Array<{ name: string; range: [number, number] }> = [
+  { name: 'Easy', range: [1, 10] },
+  { name: 'Moderate', range: [11, 30] },
+  { name: 'Hard', range: [31, 60] },
+  { name: 'Very Hard', range: [61, 80] },
+  { name: 'Extreme', range: [81, 100] },
+];
+
 const LEVEL_CONFIGS: LevelConfig[] = (() => {
-  const TIER_NAMES = ['Spark','Flame','Ember','Blaze','Storm','Thunder','Cyclone','Titan','Legend','Champion'];
   // [w, h, p4, p3, p2, p1, timeSeconds]
   const data: [number,number,number,number,number,number,number][] = [
     // ── Tier 1 — Spark (1-10): 8-14 cells ──
@@ -214,7 +221,7 @@ const LEVEL_CONFIGS: LevelConfig[] = (() => {
     // ── Tier 6 — Thunder (51-60): 24-28 cells ──
     [6,4, 4,2,1,0, 80],   [3,8, 5,1,0,1, 76],   [3,8, 4,2,1,0, 73],
     [5,5, 4,2,1,1, 70],   [3,9, 6,1,0,0, 68],   [3,9, 6,0,1,1, 66],
-    [3,9, 5,2,0,1, 64],   [4,7, 7,0,0,0, 62],   [4,7, 6,1,0,1, 60],
+    [3,9, 5,2,0,1, 64],   [4,7, 6,1,0,1, 62],   [4,7, 6,1,0,1, 60],
     [4,7, 5,2,1,0, 58],
     // ── Tier 7 — Cyclone (61-70): 28-32 cells ──
     [7,4, 7,0,0,0, 70],   [7,4, 6,1,0,1, 66],   [7,4, 5,2,1,0, 63],
@@ -239,28 +246,24 @@ const LEVEL_CONFIGS: LevelConfig[] = (() => {
   ];
 
   return data.map(([w, h, p4, p3, p2, p1, t], i) => {
-    const tierIdx = Math.floor(i / 10);
-    const sub = (i % 10) + 1;
-    return { id: i + 1, width: w, height: h, p4, p3, p2, p1, timeSeconds: t, label: `${TIER_NAMES[tierIdx]} ${sub}` };
+    const levelId = i + 1;
+    const band = DIFFICULTY_BANDS.find((entry) => levelId >= entry.range[0] && levelId <= entry.range[1]) ?? DIFFICULTY_BANDS[DIFFICULTY_BANDS.length - 1];
+    const sub = levelId - band.range[0] + 1;
+    return { id: levelId, width: w, height: h, p4, p3, p2, p1, timeSeconds: t, label: `${band.name} ${sub}` };
   });
 })();
 const MAX_LEVEL = LEVEL_CONFIGS.length; // 100
 
 const TIERS = [
-  { name: 'Spark',     range: [1, 10],   bg: 'bg-emerald-50',  border: 'border-emerald-200',  text: 'text-emerald-700',  dot: 'bg-emerald-500',  darkBg: 'bg-emerald-950/40',  darkBorder: 'border-emerald-700/50',  darkText: 'text-emerald-400' },
-  { name: 'Flame',     range: [11, 20],  bg: 'bg-teal-50',     border: 'border-teal-200',     text: 'text-teal-700',     dot: 'bg-teal-500',     darkBg: 'bg-teal-950/40',     darkBorder: 'border-teal-700/50',     darkText: 'text-teal-400' },
-  { name: 'Ember',     range: [21, 30],  bg: 'bg-sky-50',      border: 'border-sky-200',      text: 'text-sky-700',      dot: 'bg-sky-500',      darkBg: 'bg-sky-950/40',      darkBorder: 'border-sky-700/50',      darkText: 'text-sky-400' },
-  { name: 'Blaze',     range: [31, 40],  bg: 'bg-blue-50',     border: 'border-blue-200',     text: 'text-blue-700',     dot: 'bg-blue-500',     darkBg: 'bg-blue-950/40',     darkBorder: 'border-blue-700/50',     darkText: 'text-blue-400' },
-  { name: 'Storm',     range: [41, 50],  bg: 'bg-indigo-50',   border: 'border-indigo-200',   text: 'text-indigo-700',   dot: 'bg-indigo-500',   darkBg: 'bg-indigo-950/40',   darkBorder: 'border-indigo-700/50',   darkText: 'text-indigo-400' },
-  { name: 'Thunder',   range: [51, 60],  bg: 'bg-amber-50',    border: 'border-amber-200',    text: 'text-amber-700',    dot: 'bg-amber-500',    darkBg: 'bg-amber-950/40',    darkBorder: 'border-amber-700/50',    darkText: 'text-amber-400' },
-  { name: 'Cyclone',   range: [61, 70],  bg: 'bg-orange-50',   border: 'border-orange-200',   text: 'text-orange-700',   dot: 'bg-orange-500',   darkBg: 'bg-orange-950/40',   darkBorder: 'border-orange-700/50',   darkText: 'text-orange-400' },
-  { name: 'Titan',     range: [71, 80],  bg: 'bg-rose-50',     border: 'border-rose-200',     text: 'text-rose-700',     dot: 'bg-rose-500',     darkBg: 'bg-rose-950/40',     darkBorder: 'border-rose-700/50',     darkText: 'text-rose-400' },
-  { name: 'Legend',    range: [81, 90],  bg: 'bg-red-50',      border: 'border-red-200',      text: 'text-red-700',      dot: 'bg-red-500',      darkBg: 'bg-red-950/40',      darkBorder: 'border-red-700/50',      darkText: 'text-red-400' },
-  { name: 'Champion',  range: [91, 100], bg: 'bg-purple-50',   border: 'border-purple-200',   text: 'text-purple-700',   dot: 'bg-purple-500',   darkBg: 'bg-purple-950/40',   darkBorder: 'border-purple-700/50',   darkText: 'text-purple-400' },
+  { name: 'Easy',      range: [1, 10],   bg: 'bg-emerald-50',  border: 'border-emerald-200',  text: 'text-emerald-700',  dot: 'bg-emerald-500',  darkBg: 'bg-emerald-950/40',  darkBorder: 'border-emerald-700/50',  darkText: 'text-emerald-400' },
+  { name: 'Moderate',  range: [11, 30],  bg: 'bg-sky-50',      border: 'border-sky-200',      text: 'text-sky-700',      dot: 'bg-sky-500',      darkBg: 'bg-sky-950/40',      darkBorder: 'border-sky-700/50',      darkText: 'text-sky-400' },
+  { name: 'Hard',      range: [31, 60],  bg: 'bg-indigo-50',   border: 'border-indigo-200',   text: 'text-indigo-700',   dot: 'bg-indigo-500',   darkBg: 'bg-indigo-950/40',   darkBorder: 'border-indigo-700/50',   darkText: 'text-indigo-400' },
+  { name: 'Very Hard', range: [61, 80],  bg: 'bg-orange-50',   border: 'border-orange-200',   text: 'text-orange-700',   dot: 'bg-orange-500',   darkBg: 'bg-orange-950/40',   darkBorder: 'border-orange-700/50',   darkText: 'text-orange-400' },
+  { name: 'Extreme',   range: [81, 100], bg: 'bg-red-50',      border: 'border-red-200',      text: 'text-red-700',      dot: 'bg-red-500',      darkBg: 'bg-red-950/40',      darkBorder: 'border-red-700/50',      darkText: 'text-red-400' },
 ];
 
 function getTier(levelId: number) {
-  return TIERS[Math.min(Math.floor((levelId - 1) / 10), TIERS.length - 1)];
+  return TIERS.find((tier) => levelId >= tier.range[0] && levelId <= tier.range[1]) ?? TIERS[TIERS.length - 1];
 }
 
 function getLevelStarRating(levelId: number, remainingSeconds?: number): 0 | 1 | 2 | 3 {
@@ -430,7 +433,7 @@ const PIECE_DIFFICULTY_WEIGHT: Record<string, number> = {
 //   - T4/J4/L4 are mid-complexity → balanced across tiers
 //   - Fillers (I1/I2/I3/L3) follow a similar gradient but matter less
 //
-// Each row: [Lv1-20, Lv21-40, Lv41-60, Lv61-80, Lv81-100]
+// Each row: [Easy, Moderate, Hard, Very Hard, Extreme]
 const PIECE_TIER_SELECTION_WEIGHT: Record<string, [number, number, number, number, number]> = {
   // Easy pieces — strong early, fade late
   O4: [5.0, 3.5, 2.0, 1.0, 0.5],
@@ -453,7 +456,8 @@ const PIECE_TIER_SELECTION_WEIGHT: Record<string, [number, number, number, numbe
 function getPieceSelectionWeight(pieceId: string, levelId: number): number {
   const tiers = PIECE_TIER_SELECTION_WEIGHT[pieceId];
   if (!tiers) return 1;
-  const tierIndex = Math.min(4, Math.floor((levelId - 1) / 20));
+  const tierIndex = DIFFICULTY_BANDS.findIndex((band) => levelId >= band.range[0] && levelId <= band.range[1]);
+  if (tierIndex < 0) return tiers[tiers.length - 1];
   return tiers[tierIndex];
 }
 
@@ -843,21 +847,6 @@ function selectSinglePlayerPuzzle(
   });
 }
 
-function getSameTierFallbackLevels(levelId: number) {
-  const tierStart = Math.floor((levelId - 1) / 10) * 10 + 1;
-  const tierEnd = Math.min(MAX_LEVEL, tierStart + 9);
-  const order: number[] = [];
-
-  for (let offset = 1; tierStart <= levelId - offset || levelId + offset <= tierEnd; offset += 1) {
-    const lower = levelId - offset;
-    const upper = levelId + offset;
-    if (lower >= tierStart) order.push(lower);
-    if (upper <= tierEnd) order.push(upper);
-  }
-
-  return order;
-}
-
 function readLocalCompletedLevels() {
   try {
     const saved = localStorage.getItem(LOCAL_COMPLETED_KEY);
@@ -1200,19 +1189,19 @@ function LevelSelectScreen({
 
         <div className="grid gap-4 md:grid-cols-[1.5fr_1fr] mb-8">
           <div className={cn('rounded-3xl p-5 border shadow-sm', dark ? 'bg-white/5 border-white/10' : 'bg-white border-black/5')}>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Tier Navigation</p>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Difficulty Bands</p>
             <div className="flex items-center gap-3 mb-4">
               <button
                 onClick={() => setActiveTier((prev) => Math.max(0, prev - 1))}
                 disabled={activeTier === 0}
                 className={cn('p-2 rounded-xl border disabled:opacity-30', dark ? 'border-white/10 bg-white/5 hover:bg-white/10' : 'border-black/10 bg-white hover:bg-gray-50')}
-                aria-label="Previous tier"
+                aria-label="Previous band"
               >
                 <ChevronLeft size={18} />
               </button>
               <div className={cn('flex-1 rounded-2xl px-4 py-3 border', dark ? tier.darkBg : tier.bg, dark ? tier.darkBorder : tier.border)}>
                 <p className={cn('text-[10px] uppercase tracking-[0.2em] font-bold mb-1', dark ? tier.darkText : tier.text)}>
-                  Tier {activeTier + 1}
+                  Band {activeTier + 1}
                 </p>
                 <p className="text-xl font-black">{tier.name}</p>
                 <p className={cn('text-sm', dark ? 'text-gray-400' : 'text-gray-500')}>Levels {tier.range[0]}-{tier.range[1]}</p>
@@ -1221,7 +1210,7 @@ function LevelSelectScreen({
                 onClick={() => setActiveTier((prev) => Math.min(TIERS.length - 1, prev + 1))}
                 disabled={activeTier === TIERS.length - 1}
                 className={cn('p-2 rounded-xl border disabled:opacity-30', dark ? 'border-white/10 bg-white/5 hover:bg-white/10' : 'border-black/10 bg-white hover:bg-gray-50')}
-                aria-label="Next tier"
+                aria-label="Next band"
               >
                 <ChevronRight size={18} />
               </button>
@@ -1265,7 +1254,7 @@ function LevelSelectScreen({
                 </button>
               ))}
             </div>
-            <p className="text-sm text-gray-300">{visibleLevels.length} levels visible in this tier.</p>
+            <p className="text-sm text-gray-300">{visibleLevels.length} levels visible in this band.</p>
             <p className="text-xs text-gray-500 mt-2">Use filters to focus on what is playable now or revisit completed clears.</p>
           </div>
         </div>
@@ -1328,7 +1317,7 @@ function LevelSelectScreen({
           </div>
         ) : (
           <div className={cn('border border-dashed rounded-3xl p-8 text-center', dark ? 'bg-white/5 border-white/10 text-gray-400' : 'bg-white border-black/10 text-gray-500')}>
-            No levels match this filter in the current tier.
+            No levels match this filter in the current band.
           </div>
         )}
       </div>
@@ -3907,39 +3896,25 @@ export default function App() {
         }
       } catch (retryError) {
         logGenerationFailure(`retry-${generationAttempt}`, levelToSet, retryError);
+        showToast('Final generation pass for this level...', 'warning');
 
-        if (mode === 'single') {
-          const fallbackCandidates = getSameTierFallbackLevels(levelToSet);
-          let fallbackApplied = false;
-
-          for (const fallbackLevelId of fallbackCandidates) {
-            const fallbackCfg = LEVEL_CONFIGS[fallbackLevelId - 1];
-            try {
-              generationAttempt += 1;
-              selectedPuzzle = selectSinglePlayerPuzzle(fallbackCfg, recentPuzzleFingerprints, {
-                attemptsPerBatch: 420,
-                batchCount: 3,
-                noveltyPenalty: 16,
-                allowRecentFallback: true,
-              });
-              setLevel(fallbackLevelId);
-              setSinglePlayerLevel(fallbackLevelId);
-              showToast(`Level ${levelToSet} was unavailable. Loaded Level ${fallbackLevelId} in the same tier.`, 'warning');
-              logGenerationFailure(`fallback-success-${generationAttempt}`, fallbackLevelId, retryError, fallbackLevelId);
-              fallbackApplied = true;
-              break;
-            } catch (fallbackError) {
-              logGenerationFailure(`fallback-failed-${generationAttempt}`, fallbackLevelId, fallbackError, fallbackLevelId);
-            }
+        try {
+          generationAttempt += 1;
+          if (mode === 'multiplayer' && options?.puzzleSeed) {
+            selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg, {
+              attemptsPerBatch: 320,
+              batchCount: 18,
+            });
+          } else {
+            selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints, {
+              attemptsPerBatch: 620,
+              batchCount: 6,
+              noveltyPenalty: 0,
+              allowRecentFallback: true,
+            });
           }
-
-          if (!fallbackApplied) {
-            setIsGenerating(false);
-            setIsActive(false);
-            setErrorMessage('We could not generate a valid puzzle for this level. Please try again.');
-            return;
-          }
-        } else {
+        } catch (finalError) {
+          logGenerationFailure(`final-${generationAttempt}`, levelToSet, finalError);
           setIsGenerating(false);
           setIsActive(false);
           setErrorMessage('We could not generate a valid puzzle for this level. Please try again.');
