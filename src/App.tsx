@@ -118,7 +118,7 @@ interface SolvablePoolEntry {
 }
 
 interface PuzzleGenerationTelemetry {
-  source: 'pool' | 'live';
+  source: 'pool' | 'live' | 'exhaustive';
   attemptsUsed: number;
   solvedCandidates: number;
   poolSize: number;
@@ -221,7 +221,7 @@ const LEVEL_CONFIGS: LevelConfig[] = (() => {
     // ── Tier 6 — Thunder (51-60): 24-28 cells ──
     [6,4, 4,2,1,0, 80],   [3,8, 5,1,0,1, 76],   [3,8, 4,2,1,0, 73],
     [5,5, 4,2,1,1, 70],   [3,9, 6,1,0,0, 68],   [3,9, 6,0,1,1, 66],
-    [3,9, 5,2,0,1, 64],   [4,7, 6,1,0,1, 62],   [4,7, 6,1,0,1, 60],
+    [3,9, 5,2,0,1, 64],   [4,7, 6,1,0,1, 62],   [3,10, 6,2,0,0, 60],
     [4,7, 5,2,1,0, 58],
     // ── Tier 7 — Cyclone (61-70): 28-32 cells ──
     [7,4, 7,0,0,0, 70],   [7,4, 6,1,0,1, 66],   [7,4, 5,2,1,0, 63],
@@ -779,6 +779,14 @@ function findSolvablePieceSet(
     };
   }
 
+  if (bestCandidate) {
+    // Shouldn't reach here due to early return above, but safety net.
+    return {
+      entry: cloneSolvablePoolEntry(bestCandidate),
+      telemetry: { source: 'live', attemptsUsed, solvedCandidates, poolSize, recentHistorySize },
+    };
+  }
+
   const error = new Error(`Unable to generate a solvable puzzle for level ${cfg.id}.`) as Error & {
     generationTelemetry?: PuzzleGenerationTelemetry;
   };
@@ -790,6 +798,62 @@ function findSolvablePieceSet(
     recentHistorySize,
   };
   throw error;
+}
+
+/**
+ * Exhaustive last-resort generator: systematically tries ALL possible
+ * piece combinations for a level config until one solves.
+ * C(7,p4)·C(2,p3)·C(1,p2)·C(1,p1) is at most C(7,4)·2·1·1 = 70 combos,
+ * so this is always bounded and fast.
+ */
+function exhaustiveSolvablePieceSet(cfg: LevelConfig): PuzzleSelectionResult | null {
+  const board = getBoardDimensions(cfg);
+  const targetDifficulty = estimateTargetDifficulty(cfg);
+  const p4Pool = ALL_PIECES.filter((p) => p.shape.length === 4);
+  const p3Pool = ALL_PIECES.filter((p) => p.shape.length === 3);
+  const p2Pool = ALL_PIECES.filter((p) => p.shape.length === 2);
+  const p1Pool = ALL_PIECES.filter((p) => p.shape.length === 1);
+
+  function* combinations<T>(arr: T[], k: number): Generator<T[]> {
+    if (k === 0) { yield []; return; }
+    if (k > arr.length) return;
+    for (let i = 0; i <= arr.length - k; i++) {
+      for (const rest of combinations(arr.slice(i + 1), k - 1)) {
+        yield [arr[i], ...rest];
+      }
+    }
+  }
+
+  let best: PuzzleSelectionResult | null = null;
+  let bestDistance = Infinity;
+
+  for (const c4 of combinations(p4Pool, cfg.p4)) {
+    for (const c3 of combinations(p3Pool, cfg.p3)) {
+      for (const c2 of combinations(p2Pool, cfg.p2)) {
+        for (const c1 of combinations(p1Pool, cfg.p1)) {
+          const pieces = [...c4, ...c3, ...c2, ...c1];
+          const analysis = analyzeKatamino(board.width, board.height, pieces);
+          if (!analysis.solution) continue;
+
+          const score = scoreSolvedCandidate(cfg, pieces, analysis.searchNodes, analysis.deadRegionPrunes);
+          const distance = Math.abs(score - targetDifficulty);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            best = {
+              entry: {
+                pieces: clonePieceSet(pieces),
+                fingerprint: buildPuzzleFingerprint(cfg, pieces),
+                difficultyScore: score,
+                distanceToTarget: distance,
+              },
+              telemetry: { source: 'exhaustive' as PuzzleGenerationTelemetry['source'], attemptsUsed: 0, solvedCandidates: 1, poolSize: 0, recentHistorySize: 0 },
+            };
+          }
+        }
+      }
+    }
+  }
+  return best;
 }
 
 function generateChallengePieces(
@@ -829,6 +893,8 @@ function selectSinglePlayerPuzzle(
 ): PuzzleSelectionResult {
   const recentFingerprints = new Set(recentHistory);
   const poolSize = getPrecomputedLevelPool(cfg).length;
+
+  // 1) Pool pick (fast, precomputed)
   const fromPool = pickPoolCandidate(cfg, {
     recentFingerprints,
     allowRecentFallback: options?.allowRecentFallback ?? false,
@@ -836,15 +902,27 @@ function selectSinglePlayerPuzzle(
   });
   if (fromPool) return fromPool;
 
-  return findSolvablePieceSet(cfg, {
-    random: Math.random,
-    attemptsPerBatch: options?.attemptsPerBatch ?? 260,
-    batchCount: options?.batchCount ?? 2,
-    recentFingerprints,
-    noveltyPenalty: options?.noveltyPenalty ?? 12,
-    poolSize,
-    recentHistorySize: recentHistory.length,
-  });
+  // 2) Live random generation
+  try {
+    return findSolvablePieceSet(cfg, {
+      random: Math.random,
+      attemptsPerBatch: options?.attemptsPerBatch ?? 260,
+      batchCount: options?.batchCount ?? 2,
+      recentFingerprints,
+      noveltyPenalty: options?.noveltyPenalty ?? 12,
+      poolSize,
+      recentHistorySize: recentHistory.length,
+    });
+  } catch {
+    // 3) Exhaustive brute-force: try every possible piece combination
+    const exhaustive = exhaustiveSolvablePieceSet(cfg);
+    if (exhaustive) {
+      console.warn(`[level ${cfg.id}] random generation failed, used exhaustive fallback`);
+      return exhaustive;
+    }
+    // 4) This should never happen if level configs are valid, but re-throw
+    throw new Error(`Level ${cfg.id} has no solvable piece combination — config is invalid.`);
+  }
 }
 
 function readLocalCompletedLevels() {
@@ -3873,53 +3951,38 @@ export default function App() {
       if (mode === 'multiplayer' && options?.puzzleSeed) {
         selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg);
       } else {
+        // selectSinglePlayerPuzzle includes pool → live → exhaustive fallback,
+        // so it should always return a valid puzzle for any valid level config.
         selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints);
       }
     } catch (error) {
       logGenerationFailure(`primary-${generationAttempt}`, levelToSet, error);
-      showToast('Regenerating puzzle with extended search...', 'warning');
 
+      // Retry with relaxed constraints
       try {
         generationAttempt += 1;
         if (mode === 'multiplayer' && options?.puzzleSeed) {
           selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg, {
-            attemptsPerBatch: 260,
-            batchCount: 14,
+            attemptsPerBatch: 320,
+            batchCount: 18,
           });
         } else {
           selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints, {
-            attemptsPerBatch: 420,
-            batchCount: 3,
-            noveltyPenalty: 16,
+            attemptsPerBatch: 620,
+            batchCount: 6,
+            noveltyPenalty: 0,
             allowRecentFallback: true,
           });
         }
-      } catch (retryError) {
-        logGenerationFailure(`retry-${generationAttempt}`, levelToSet, retryError);
-        showToast('Final generation pass for this level...', 'warning');
-
-        try {
-          generationAttempt += 1;
-          if (mode === 'multiplayer' && options?.puzzleSeed) {
-            selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg, {
-              attemptsPerBatch: 320,
-              batchCount: 18,
-            });
-          } else {
-            selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints, {
-              attemptsPerBatch: 620,
-              batchCount: 6,
-              noveltyPenalty: 0,
-              allowRecentFallback: true,
-            });
-          }
-        } catch (finalError) {
-          logGenerationFailure(`final-${generationAttempt}`, levelToSet, finalError);
-          setIsGenerating(false);
-          setIsActive(false);
-          setErrorMessage('We could not generate a valid puzzle for this level. Please try again.');
-          return;
-        }
+      } catch (finalError) {
+        // This means the level config itself has no solvable combination at all.
+        // Should never happen with validated configs.
+        logGenerationFailure(`final-${generationAttempt}`, levelToSet, finalError);
+        console.error(`Level ${levelToSet} config is unsolvable — this is a bug.`);
+        setIsGenerating(false);
+        setIsActive(false);
+        setErrorMessage('We could not generate a valid puzzle for this level. Please try again.');
+        return;
       }
     }
 

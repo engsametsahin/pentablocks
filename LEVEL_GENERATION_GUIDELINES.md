@@ -1,179 +1,264 @@
 # Level Generation Guidelines (V2)
 
-This document defines the new target model for single-player level generation in PentaBlocks.
-Primary goals:
+This document defines the rules for single-player puzzle generation in PentaBlocks.
+Primary invariants:
 
-1. Every level must be solvable.
+1. **Every puzzle shown to the player must be solvable.** No exceptions.
 2. Difficulty must increase in a meaningful and predictable way.
 3. Puzzle repetition must stay low without blocking generation.
-4. Level generation must stay fast.
+4. Level generation must stay fast (target: <500ms per level).
+
+> **Status legend** ✅ implemented ⏳ planned
 
 ---
 
-## 1) Target Progression Model
-
-We use 5 main difficulty bands:
-
-| Band | Levels | Count | Intent |
-|---|---:|---:|---|
-| Easy | 1-10 | 10 | Learn mechanics, low pressure |
-| Moderate | 11-30 | 20 | Stable challenge growth |
-| Hard | 31-60 | 30 | Multi-step planning required |
-| Very Hard | 61-90 | 30 | Tight decisions and fewer forgiving layouts |
-| Extreme | 91-120 | 30 | Expert-level pressure and precision |
-
-Total planned levels in this model: **120**.
-
-Note:
-- If product scope must remain 100 levels, keep the same 5-band logic and reduce counts proportionally.
-- Band names and boundaries are the source of truth for tuning and analytics.
-
----
-
-## 2) Solvability Contract (Non-Negotiable)
+## 1) Solvability Contract (Non-Negotiable)
 
 For any level `L`:
 
-1. The game must never present an unsolved puzzle to the player.
-2. If generation for `L` fails, the system retries with relaxed novelty constraints on the same level first.
-3. Fallback to another level is allowed only as an internal temporary safety path and must be tracked in telemetry.
-4. Long-term target is zero player-visible fallback events.
+1. ✅ The game must never present an unsolved puzzle to the player.
+2. ✅ Generation runs a 3-stage pipeline: pool → live random → exhaustive brute-force.
+3. ✅ The exhaustive fallback tries ALL valid piece combinations (bounded, max ~70 combos).
+4. ✅ If a level config has zero solvable combinations, it cannot ship (build-time validation).
 
-Player-facing principle:
-- The selected level should open as itself, not silently downgrade.
+Player-facing guarantee:
+- The selected level always opens with a valid, solvable puzzle.
+- No "level unavailable" or fallback to a different level.
+
+---
+
+## 2) Level Structure
+
+100 levels organized in 10 tiers:
+
+| Tier | Name | Levels | Cell range | Time range | Intent |
+|------|------|--------|------------|------------|--------|
+| 1 | Spark | 1–10 | 8–14 | 120–180s | Learn mechanics |
+| 2 | Flame | 11–20 | 12–16 | 100–140s | Stable growth |
+| 3 | Ember | 21–30 | 16–18 | 85–120s | Multi-step planning |
+| 4 | Blaze | 31–40 | 20–21 | 72–100s | Increasing complexity |
+| 5 | Storm | 41–50 | 21–25 | 68–90s | Time pressure begins |
+| 6 | Thunder | 51–60 | 24–30 | 58–80s | Tight decisions |
+| 7 | Cyclone | 61–70 | 28–32 | 46–70s | High planning density |
+| 8 | Titan | 71–80 | 24–35 | 38–58s | Wide grid mastery |
+| 9 | Legend | 81–90 | 12–36 | 26–50s | Mixed: large + speed |
+| 10 | Champion | 91–100 | 12–16 | 18–35s | Expert speedruns |
+
+### Level config validation rules
+
+Each level config must pass (verified for all 100 levels):
+
+1. Cell equation: `p4×4 + p3×3 + p2×2 + p1×1 = width × height`
+2. Piece limits: `p4 ≤ 7, p3 ≤ 2, p2 ≤ 1, p1 ≤ 1`
+3. Uniqueness: no duplicate `(w, h, p4, p3, p2, p1)` across all levels
+4. Solvability: at least one valid piece combination solves the board
 
 ---
 
 ## 3) Generation Pipeline
 
-Generation runs in two stages:
+Generation runs in `selectSinglePlayerPuzzle()` → `initGame()`.
 
-1. **Precomputed solvable pool (primary):**
-   - Keep multiple solvable candidates per level.
-   - Prefer candidates close to level target difficulty.
-   - Filter recent fingerprints for anti-memorization.
+### Stage 1: Precomputed pool (fast, primary)
 
-2. **Live generation (fallback on same level):**
-   - Run bounded solver attempts.
-   - If no novel candidate exists, allow recent fingerprint reuse as last resort.
-   - Still require a valid solver result.
+`getPrecomputedLevelPool(cfg)`:
 
-Hard rule:
-- Novelty is important, solvability is mandatory.
+- Seeded RNG per level: `pool:v1:${levelId}` → deterministic across sessions.
+- Budget: up to 520 attempts.
+- Target: 24 unique solved fingerprints.
+- Keep best 12 by distance to target difficulty.
+- Cache: in-memory per session.
 
----
+`pickPoolCandidate()`:
 
-## 4) Difficulty Design Rules by Band
+- Filter out recent fingerprints.
+- Sort remaining by distance to target.
+- Pick randomly from top 6 band.
 
-### Easy (1-10)
-- Simpler shapes and forgiving board proportions.
-- More time budget.
-- Lower branching and clearer placement affordances.
+### Stage 2: Live random generation (fallback)
 
-### Moderate (11-30)
-- Introduce more mixed piece interactions.
-- Slightly tighter time.
-- Start requiring look-ahead beyond first placement.
+`findSolvablePieceSet()`:
 
-### Hard (31-60)
-- Increase search depth and trap potential.
-- Balanced board variety (not only narrow or only wide).
-- Time pressure becomes meaningful.
+- Multi-batch: up to 2 batches × 260 attempts (single) or 10 × 160 (multiplayer).
+- Each solved candidate scored; novelty penalty (+12) for recent fingerprints.
+- Early exit when distance ≤ acceptable or enough candidates found.
 
-### Very Hard (61-90)
-- High planning density.
-- Less forgiving piece mixes.
-- Strong anti-bruteforce feel with still-fair solvability.
+### Stage 3: Exhaustive brute-force (last resort)
 
-### Extreme (91-120)
-- Expert mode.
-- Strict time pressure and precision.
-- Highest solver complexity targets while staying deterministic and fair.
+`exhaustiveSolvablePieceSet()`:
 
----
+- ✅ Tries ALL valid piece combinations systematically.
+- C(7,p4)·C(2,p3)·C(1,p2)·C(1,p1) ≤ 70 combos → always bounded and fast.
+- Picks the combination closest to target difficulty.
+- Guarantees a valid puzzle if any solvable combination exists.
 
-## 5) Anti-Memorization Without Breaking Reliability
+### Retry in initGame
 
-Use fingerprint history per player:
+If Stage 1+2+3 all fail (primary attempt), one retry with relaxed parameters:
+- Increased budget: 620 attempts × 6 batches.
+- Novelty penalty: 0 (any fingerprint accepted).
+- Recent fallback: allowed.
 
-1. Prefer unseen fingerprints.
-2. If unseen pool is exhausted, expand selection band.
-3. If still blocked, allow recent fingerprint reuse for the same level.
+If both attempts fail, the level config itself is broken (should never happen with validated configs).
 
-Do not fail level generation only because novelty filtering is strict.
-
----
-
-## 6) Level Configuration Safety Rules
-
-Each level config must pass:
-
-1. Cell equation check:
-   - `p4*4 + p3*3 + p2*2 + p1*1 (+ p5*5 if enabled) == boardWidth * boardHeight`
-2. Piece limits check:
-   - Must not request unavailable piece counts.
-3. Solvability check:
-   - At least one solvable fingerprint exists.
-4. Runtime budget check:
-   - Generation should stay inside target latency.
-
-Any config that fails these checks cannot ship.
+```
+initGame()
+  └─ selectSinglePlayerPuzzle(cfg, recentHistory)
+       ├─ pickPoolCandidate(cfg, {recentFingerprints})  [Stage 1]
+       │    └─ getPrecomputedLevelPool(cfg)
+       │         └─ analyzeKatamino(w, h, pieces)
+       ├─ findSolvablePieceSet(cfg, {random, noveltyPenalty})  [Stage 2]
+       │    └─ analyzeKatamino(w, h, pieces)
+       └─ exhaustiveSolvablePieceSet(cfg)  [Stage 3]
+            └─ analyzeKatamino(w, h, pieces)  [for each combination]
+```
 
 ---
 
-## 7) New Piece Expansion Policy (If Needed)
+## 4) Difficulty Design
 
-If progression cannot remain smooth with current set, add new piece families in a controlled way.
+### Target difficulty (`estimateTargetDifficulty`)
 
-Suggested order:
+```
+target = 4
+       + progress × 28          // linear 0→28 across levels 1→100
+       + areaFactor × 4         // (w×h) / 36
+       + mixFactor × 0.35       // sum of piece difficulty weights
+```
+
+### Candidate score (`scoreSolvedCandidate`)
+
+```
+score = pieceMixScore × 1.35
+      + log10(searchNodes + 1) × 8.5
+      + log10(deadRegionPrunes + 1) × 4.2
+      + aspectPenalty             // |width − height| × 0.12
+```
+
+### Piece difficulty weights (scoring)
+
+| Piece | Weight | Reasoning |
+|-------|--------|-----------|
+| I1 | 0.20 | Trivial filler |
+| I2 | 0.40 | Simple filler |
+| I3 | 0.65 | Limited orientations |
+| O4 | 0.75 | Only 1 orientation |
+| I4 | 0.90 | Only 2 orientations |
+| L3 | 1.10 | 4 orientations |
+| T4 | 1.20 | 4 orientations |
+| J4 | 1.25 | 4 orientations |
+| L4 | 1.25 | 4 orientations |
+| S4 | 1.45 | Mirror-asymmetric, 4 orientations |
+| Z4 | 1.45 | Mirror-asymmetric, 4 orientations |
+
+### Tier-based piece selection weights
+
+✅ `weightedPickWithRng()` biases which pieces appear based on level range.
+Easy pieces dominate early levels; hard pieces dominate late levels.
+
+| Piece | Lv 1–20 | Lv 21–40 | Lv 41–60 | Lv 61–80 | Lv 81–100 | Character |
+|-------|---------|----------|----------|----------|-----------|-----------|
+| O4 | 5.0 | 3.5 | 2.0 | 1.0 | 0.5 | Easy — strong early |
+| I4 | 4.5 | 3.0 | 2.0 | 1.2 | 0.8 | Easy — strong early |
+| T4 | 2.0 | 3.0 | 3.5 | 3.0 | 2.5 | Mid — balanced |
+| J4 | 1.5 | 2.5 | 3.0 | 3.5 | 3.0 | Mid — late leaning |
+| L4 | 1.5 | 2.5 | 3.0 | 3.5 | 3.0 | Mid — late leaning |
+| S4 | 0.5 | 1.5 | 2.5 | 4.0 | 5.0 | Hard — strong late |
+| Z4 | 0.5 | 1.5 | 2.5 | 4.0 | 5.0 | Hard — strong late |
+| I3 | 3.0 | 2.5 | 2.0 | 1.5 | 1.0 | Filler — early bias |
+| L3 | 1.0 | 1.5 | 2.0 | 2.5 | 3.0 | Filler — late bias |
+| I2 | 2.0 | 2.0 | 2.0 | 2.0 | 2.0 | Flat — no bias |
+| I1 | 2.0 | 2.0 | 2.0 | 2.0 | 2.0 | Flat — no bias |
+
+### Acceptance bands
+
+| Levels | `acceptableDistance` |
+|--------|---------------------|
+| 1–20 | 4.5 (wider) |
+| 21–60 | 3.25 (medium) |
+| 61–100 | 2.5 (tight) |
+
+---
+
+## 5) Anti-Memorization
+
+1. ✅ Recent fingerprint history per user (local + cloud sync, max 36 FIFO).
+2. ✅ Pool selection filters out recent fingerprints first.
+3. ✅ Live generation applies novelty penalty (+12) to recent fingerprints.
+4. ✅ If all pool entries are recent: live generation with penalty.
+5. ✅ If live generation also fails novelty: exhaustive fallback picks any valid solution.
+
+Novelty is best-effort. Solvability always wins over novelty.
+
+---
+
+## 6) Solver Performance
+
+Implemented in `solver.ts` (`analyzeKatamino`):
+
+| Feature | Status | Detail |
+|---------|--------|--------|
+| Solution cache | ✅ | `solutionCache` keyed by `w×h:sortedPieceIDs` |
+| Orientation precomputation | ✅ | `getAllOrientations()` with dedup |
+| Piece ordering heuristic | ✅ | Fewer orientations first, then larger pieces |
+| Dead-region pruning | ✅ | `hasViableEmptyRegions()` — flood-fill + subset-sum |
+
+### ⏳ Future enhancements
+
+- Web Worker offloading for large boards (level 58+ can block main thread 200ms+).
+- Island connectivity pruning.
+
+---
+
+## 7) Caching Layers
+
+1. **Solver cache** (`solutionCache` in solver.ts) — keyed by `w×h:sortedPieceIDs`.
+2. **Pool cache** (`precomputedLevelPoolCache`) — keyed by level ID, per session.
+3. **Piece set cache** (`solvablePieceSetCache`) — keyed by `challenge:levelId:seed`.
+
+All caches are in-memory and cleared on page reload.
+
+---
+
+## 8) Operational Thresholds
+
+| Constant | Value | Location |
+|----------|-------|----------|
+| `RECENT_PUZZLE_HISTORY_LIMIT` | 36 | `App.tsx` |
+| `PRECOMPUTED_POOL_SIZE` | 12 | `App.tsx` |
+| `PRECOMPUTED_POOL_SOLVED_TARGET` | 24 | `App.tsx` |
+| `PRECOMPUTED_POOL_MAX_ATTEMPTS` | 520 | `App.tsx` |
+| `noveltyPenalty` (single player) | 12 | `selectSinglePlayerPuzzle()` |
+| `noveltyPenalty` (pool pick) | 8 | `findSolvablePieceSet()` default |
+| `acceptableDistance` Lv 1–20 | 4.5 | `findSolvablePieceSet()` |
+| `acceptableDistance` Lv 21–60 | 3.25 | `findSolvablePieceSet()` |
+| `acceptableDistance` Lv 61–100 | 2.5 | `findSolvablePieceSet()` |
+
+---
+
+## 9) Piece Expansion Policy (If Needed)
+
+If progression cannot remain smooth with the current 11-piece set:
 
 1. Add additional tri/tetromino variants first (lowest disruption).
-2. If still insufficient, introduce pentomino family (`p5`) for Very Hard / Extreme only.
+2. If insufficient, introduce pentomino family (`p5`) for Cyclone+ tiers only.
 3. Rebalance scoring and solver heuristics after each expansion.
 
-Activation criteria for adding pieces:
-
-1. Frequent generation failures at specific levels.
-2. Repetition pressure too high despite novelty strategy.
-3. Difficulty curve plateaus in higher bands.
-
----
-
-## 8) Telemetry Requirements
-
-Track these per level:
-
-1. Generation source (`pool` or `live`)
-2. Attempts used
-3. Solved candidates found
-4. Novelty fallback usage
-5. Player-visible fallback events
-6. Time-to-generate
-
-Operational target:
-- Player-visible "level unavailable" should trend to near zero.
+Activation criteria:
+- Frequent generation failures at specific levels.
+- Repetition pressure too high despite novelty strategy.
+- Difficulty curve plateaus in higher bands.
 
 ---
 
-## 9) Acceptance Criteria for Release
+## 10) Telemetry
 
-A level set is release-ready only if:
+Track per level:
 
-1. All levels in scope are solvable.
-2. Difficulty trend is monotonic by band (with minor controlled variance).
-3. Generation latency stays within budget on target devices.
-4. No critical fallback loops or unsolved level exposure exists.
-
----
-
-## 10) Implementation Notes
-
-Current app behavior may still include temporary same-tier fallback in some failure cases.
-This document defines the **target standard**: stable solvability on the selected level with minimal visible fallback.
-
-Next technical steps:
-
-1. Align runtime fallback policy with this contract.
-2. Tune constrained levels that cause repeated unavailability.
-3. Prepare optional 120-level migration plan (or compressed 100-level equivalent).
-
+1. ✅ Generation source (`pool`, `live`, or `exhaustive`)
+2. ✅ Attempts used
+3. ✅ Solved candidates found
+4. ✅ Pool size
+5. ✅ Recent history size
+6. ⏳ Time-to-generate
+7. ⏳ Player-visible fallback events (target: zero)
