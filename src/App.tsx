@@ -952,6 +952,17 @@ function selectSinglePlayerPuzzle(
   }
 }
 
+function isGeneratedPuzzleStructurallyValid(cfg: LevelConfig, pieces: Piece[]) {
+  const board = getBoardDimensions(cfg);
+  const expectedPieceCount = cfg.p4 + cfg.p3 + cfg.p2 + cfg.p1 + cfg.p5;
+  const expectedCellCount = board.width * board.height - cfg.blockedCells.length;
+  if (pieces.length !== expectedPieceCount) return false;
+  const uniqueIds = new Set(pieces.map((piece) => piece.id));
+  if (uniqueIds.size !== pieces.length) return false;
+  const actualCellCount = pieces.reduce((sum, piece) => sum + piece.shape.length, 0);
+  return actualCellCount === expectedCellCount;
+}
+
 function readLocalCompletedLevels() {
   try {
     const saved = localStorage.getItem(LOCAL_COMPLETED_KEY);
@@ -4265,6 +4276,9 @@ export default function App() {
         // so it should always return a valid puzzle for any valid level config.
         selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints);
       }
+      if (!isGeneratedPuzzleStructurallyValid(cfg, selectedPuzzle.entry.pieces)) {
+        throw new Error('generated puzzle payload invalid');
+      }
     } catch (error) {
       logGenerationFailure(`primary-${generationAttempt}`, levelToSet, error);
 
@@ -4283,6 +4297,9 @@ export default function App() {
             noveltyPenalty: 0,
             allowRecentFallback: true,
           });
+        }
+        if (!isGeneratedPuzzleStructurallyValid(cfg, selectedPuzzle.entry.pieces)) {
+          throw new Error('generated puzzle payload invalid');
         }
       } catch (finalError) {
         // This means the level config itself has no solvable combination at all.
@@ -4889,6 +4906,7 @@ export default function App() {
   };
 
   const handlePointerUp = useCallback((pointerId?: number | null) => {
+    const releasedPieceId = dragStartRef.current?.id ?? null;
     if (isDraggingRef.current) {
       setDraggedPiece(null);
     }
@@ -4896,7 +4914,10 @@ export default function App() {
     dragStartRef.current = null;
     isDraggingRef.current = false;
     clearPointerTrack();
-  }, [clearPointerTrack, releaseCapturedPointer]);
+    if (releasedPieceId) {
+      ensurePieceStaysReachable(releasedPieceId);
+    }
+  }, [clearPointerTrack, ensurePieceStaysReachable, releaseCapturedPointer]);
 
   // ── Global event listeners ────────────────────────────────────────────────
   // Touch events are dispatched to the ORIGINAL target element, not whatever
@@ -5133,11 +5154,7 @@ export default function App() {
       }
     }
 
-    const releasedId = track && track.pointerId === e.pointerId ? track.id : null;
     handlePointerUp(e.pointerId);
-    if (releasedId) {
-      ensurePieceStaysReachable(releasedId);
-    }
   };
 
   const onSurfacePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {

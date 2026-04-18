@@ -2590,6 +2590,10 @@ async function createArenaMatchRecord(client, {
   playerBId,
   playerBRating,
 }) {
+  if (Number(playerAId) === Number(playerBId)) {
+    throw new Error('arena_self_match_blocked');
+  }
+
   const avgRating = Math.round((playerARating + playerBRating) / 2);
   const levelId = arenaLevelForRating(avgRating);
   const puzzleSeed = buildPuzzleSeed();
@@ -2712,10 +2716,23 @@ async function runArenaMatchmaking(userId, userRating) {
   try {
     await client.query('BEGIN');
 
+    // Safety cleanup: invalidate any accidental self-match records first.
+    await client.query(
+      `UPDATE arena_matches
+         SET status = 'aborted',
+             finished_at = NOW(),
+             winner_id = NULL
+       WHERE player1_id = $1
+         AND player2_id = $1
+         AND status IN ('pending', 'active')`,
+      [userId],
+    );
+
     // Guard: prevent joining queue while already in an active/pending match
     const activeMatchQ = await client.query(
       `SELECT code FROM arena_matches
        WHERE (player1_id = $1 OR player2_id = $1)
+         AND player1_id <> player2_id
          AND status IN ('pending', 'active')
        LIMIT 1`,
       [userId],
@@ -3074,6 +3091,7 @@ app.get('/api/arena/queue/status', async (req, res) => {
     const matchQ = await pool.query(
       `SELECT code FROM arena_matches
        WHERE (player1_id = $1 OR player2_id = $1)
+         AND player1_id <> player2_id
          AND status IN ('pending', 'active')
        ORDER BY created_at DESC
        LIMIT 1`,
@@ -3110,6 +3128,18 @@ app.get('/api/arena/match/:code', async (req, res) => {
     await finalizeArenaMatchIfReady(req.params.code);
     const dto = await fetchArenaMatch(req.params.code);
     if (!dto) { res.status(404).json({ error: 'arena_match_not_found' }); return; }
+    if (dto.player1.id === dto.player2.id) {
+      await pool.query(
+        `UPDATE arena_matches
+           SET status = 'aborted',
+               finished_at = NOW(),
+               winner_id = NULL
+         WHERE code = $1`,
+        [req.params.code],
+      );
+      res.status(409).json({ error: 'arena_invalid_match' });
+      return;
+    }
     // Only players can see the match
     if (dto.player1.id !== Number(user.id) && dto.player2.id !== Number(user.id)) {
       res.status(403).json({ error: 'arena_match_forbidden' }); return;
