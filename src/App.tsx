@@ -4678,6 +4678,37 @@ export default function App() {
     });
   }, []);
 
+  const ensurePieceStaysReachable = useCallback((id: string) => {
+    // If a piece is dropped fully outside the board, auto-return it to stash.
+    // This prevents "missing piece" states that can feel like unsolvable puzzles.
+    setPlacedPieces((prev) => {
+      const piece = prev.find((p) => p.id === id);
+      if (!piece) return prev;
+
+      const intersectsBoard = piece.currentShape.some((cell) => {
+        const x = piece.position.x + cell.x;
+        const y = piece.position.y + cell.y;
+        return x >= 0 && x < gridWidth && y >= 0 && y < gridHeight;
+      });
+      if (intersectsBoard) return prev;
+
+      setAvailablePieces((ap) => {
+        if (ap.some((p) => p.id === id)) return ap;
+        return [
+          ...ap,
+          {
+            id: piece.id,
+            name: piece.name,
+            shape: orientShapeForStash(piece.currentShape),
+            color: piece.color,
+          },
+        ];
+      });
+
+      return prev.filter((p) => p.id !== id);
+    });
+  }, [gridHeight, gridWidth]);
+
   const resetPiecesToStash = useCallback(() => {
     const allIds = stashOrderRef.current.length > 0
       ? stashOrderRef.current
@@ -5102,7 +5133,11 @@ export default function App() {
       }
     }
 
+    const releasedId = track && track.pointerId === e.pointerId ? track.id : null;
     handlePointerUp(e.pointerId);
+    if (releasedId) {
+      ensurePieceStaysReachable(releasedId);
+    }
   };
 
   const onSurfacePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
