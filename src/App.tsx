@@ -1640,95 +1640,102 @@ function ArenaScreen({
   const isDark = resolvedTheme === 'dark';
 
   return (
-    <div className={cn('min-h-screen flex flex-col items-center justify-start p-4 pt-12 max-w-md mx-auto', isDark ? 'bg-black text-white' : 'bg-white text-black')}>
-      <div className="w-full flex items-center mb-8">
-        <button onClick={onBack} className={cn('p-2 rounded-xl transition-all', isDark ? 'hover:bg-white/10' : 'hover:bg-black/5')}>
-          <ChevronLeft size={24} />
-        </button>
-        <h1 className="text-2xl font-bold ml-2">Arena</h1>
-      </div>
+    <div className={cn('min-h-screen p-6 md:p-10', isDark ? 'bg-[#0b0f17] text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]')}>
+      <div className="max-w-6xl mx-auto">
+        <div className="w-full flex items-center mb-8">
+          <button onClick={onBack} className={cn('p-3 rounded-xl transition-all active:scale-95', isDark ? 'bg-white/10 hover:bg-white/15 border border-white/10' : 'bg-black text-white hover:bg-gray-800')}>
+            <ChevronLeft size={22} />
+          </button>
+          <h1 className="text-3xl font-black ml-3 tracking-tight">Arena</h1>
+        </div>
 
-      {/* Rating card */}
-      <div className={cn('w-full rounded-3xl p-6 mb-6 border-2', tier.bg, tier.border)}>
-        <div className="flex items-center justify-between mb-4">
+        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] font-bold text-gray-500 mb-1">Rating</p>
-            <p className="text-4xl font-black">{rating}</p>
+            <div className={cn('w-full rounded-3xl p-6 mb-6 border-2 text-black', tier.bg, tier.border)}>
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] font-bold text-black/60 mb-1">Rating</p>
+                  <p className="text-5xl font-black text-black">{rating}</p>
+                </div>
+                <div className={cn('px-4 py-2 rounded-2xl font-bold text-sm border bg-white/70 text-black', tier.border)}>
+                  {tier.name}
+                </div>
+              </div>
+              {profile && (
+                <div className="grid grid-cols-3 gap-3 text-center text-sm">
+                  <div>
+                    <p className="font-black text-black">{profile.matchesPlayed}</p>
+                    <p className="text-black/60 text-xs font-semibold">Played</p>
+                  </div>
+                  <div>
+                    <p className="font-black text-emerald-700">{profile.wins}</p>
+                    <p className="text-black/60 text-xs font-semibold">Wins</p>
+                  </div>
+                  <div>
+                    <p className="font-black text-red-600">{profile.losses}</p>
+                    <p className="text-black/60 text-xs font-semibold">Losses</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className={cn('w-full border rounded-2xl p-4 mb-6', isDark ? 'bg-white/5 border-white/10' : 'bg-white border-black/10')}>
+              <p className="text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-3">Tier Ladder</p>
+              <div className="space-y-2">
+                {[...ARENA_TIERS].reverse().map((t) => (
+                  <div key={t.name} className={cn('flex items-center justify-between text-sm px-3 py-1.5 rounded-xl', t.name === tier.name ? cn(t.bg, 'font-bold') : '')}>
+                    <span className={t.color}>{t.name}</span>
+                    <span className={cn('text-xs font-semibold', isDark ? 'text-gray-300' : 'text-gray-500')}>{t.minRating}+</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-          <div className={cn('px-4 py-2 rounded-2xl font-bold text-sm', tier.bg, tier.color, 'border', tier.border)}>
-            {tier.name}
+
+          <div>
+            <div className={cn('rounded-3xl p-6 border shadow-sm', isDark ? 'bg-white/5 border-white/10' : 'bg-white border-black/10')}>
+              {phase === 'idle' && (
+                isGuest ? (
+                  <div className={cn('w-full text-center p-6 rounded-2xl border', isDark ? 'bg-amber-500/10 border-amber-300/30 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-800')}>
+                    <p className="font-bold mb-1">Sign in to play Arena</p>
+                    <p className="text-sm opacity-90">Guest accounts cannot join ranked matches.</p>
+                  </div>
+                ) : (
+                  <button
+                    onClick={onJoin}
+                    className="w-full py-5 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-2xl font-bold text-lg hover:from-red-600 hover:to-orange-600 transition-all shadow-lg"
+                  >
+                    <Swords className="inline mr-2 mb-0.5" size={20} />
+                    Find Match
+                  </button>
+                )
+              )}
+
+              {phase === 'queuing' && (
+                <div className="w-full text-center">
+                  <div className="w-16 h-16 border-4 border-red-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                  <p className="font-bold text-lg mb-1">Finding Opponent...</p>
+                  <p className={cn('text-sm mb-6', isDark ? 'text-gray-300' : 'text-gray-500')}>{formatWaitTime(queueSeconds)} in queue</p>
+                  <button
+                    onClick={onLeave}
+                    className={cn('w-full py-3 border-2 rounded-2xl font-bold transition-all', isDark ? 'border-white/20 text-gray-200 hover:border-white/40' : 'border-gray-200 text-gray-600 hover:border-gray-400')}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {phase === 'pregame' && match && (
+                <div className="w-full text-center">
+                  <p className={cn('mb-2', isDark ? 'text-gray-300' : 'text-gray-500')}>vs {match.player1.id === user?.id ? match.player2.displayName : match.player1.displayName}</p>
+                  <div className="text-7xl font-black mb-4">{countdown}</div>
+                  <p className={cn('text-sm', isDark ? 'text-gray-400' : 'text-gray-500')}>Match starting...</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-        {profile && (
-          <div className="grid grid-cols-3 gap-3 text-center text-sm">
-            <div>
-              <p className="font-bold">{profile.matchesPlayed}</p>
-              <p className="text-gray-500 text-xs">Played</p>
-            </div>
-            <div>
-              <p className="font-bold text-emerald-600">{profile.wins}</p>
-              <p className="text-gray-500 text-xs">Wins</p>
-            </div>
-            <div>
-              <p className="font-bold text-red-500">{profile.losses}</p>
-              <p className="text-gray-500 text-xs">Losses</p>
-            </div>
-          </div>
-        )}
       </div>
-
-      {/* Tier ladder */}
-      <div className={cn('w-full border rounded-2xl p-4 mb-6', isDark ? 'bg-white/5 border-white/10' : 'bg-white border-black/10')}>
-        <p className="text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-3">Tier Ladder</p>
-        <div className="space-y-2">
-          {[...ARENA_TIERS].reverse().map((t) => (
-            <div key={t.name} className={cn('flex items-center justify-between text-sm px-3 py-1.5 rounded-xl', t.name === tier.name ? cn(t.bg, 'font-bold') : '')}>
-              <span className={t.color}>{t.name}</span>
-              <span className="text-gray-400 text-xs">{t.minRating}+</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* CTA */}
-      {phase === 'idle' && (
-        isGuest ? (
-          <div className="w-full text-center p-6 bg-amber-50 border border-amber-200 rounded-2xl">
-            <p className="font-bold text-amber-700 mb-1">Sign in to play Arena</p>
-            <p className="text-sm text-amber-600">Guest accounts cannot join ranked matches.</p>
-          </div>
-        ) : (
-          <button
-            onClick={onJoin}
-            className="w-full py-5 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-2xl font-bold text-lg hover:from-red-600 hover:to-orange-600 transition-all shadow-lg"
-          >
-            <Swords className="inline mr-2 mb-0.5" size={20} />
-            Find Match
-          </button>
-        )
-      )}
-
-      {phase === 'queuing' && (
-        <div className="w-full text-center">
-          <div className="w-16 h-16 border-4 border-red-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="font-bold text-lg mb-1">Finding Opponent…</p>
-          <p className="text-gray-500 text-sm mb-6">{formatWaitTime(queueSeconds)} in queue</p>
-          <button
-            onClick={onLeave}
-            className={cn('w-full py-3 border-2 rounded-2xl font-bold transition-all', isDark ? 'border-white/20 text-gray-300 hover:border-white/40' : 'border-gray-200 text-gray-600 hover:border-gray-400')}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-
-      {phase === 'pregame' && match && (
-        <div className="w-full text-center">
-          <p className="text-gray-500 mb-2">vs {match.player1.id === user?.id ? match.player2.displayName : match.player1.displayName}</p>
-          <div className="text-7xl font-black mb-4">{countdown}</div>
-          <p className="text-gray-400 text-sm">Match starting…</p>
-        </div>
-      )}
     </div>
   );
 }
@@ -1740,6 +1747,7 @@ function MultiplayerScreen({
   onGuestBootstrap,
   onGuestNicknameUpdate,
   multiplayerStats,
+  resolvedTheme,
   onToast,
 }: {
   user: CloudUser | null;
@@ -1748,6 +1756,7 @@ function MultiplayerScreen({
   onGuestBootstrap: () => Promise<boolean>;
   onGuestNicknameUpdate: (nickname: string) => Promise<void>;
   multiplayerStats: MultiplayerStats | null;
+  resolvedTheme: 'dark' | 'light';
   onToast: (message: string, tone?: ToastTone) => void;
 }) {
   const [difficulty, setDifficulty] = useState<RoomDifficulty>('moderate');
@@ -1862,6 +1871,7 @@ function MultiplayerScreen({
     ? `Players ${playerCount}/${readyTarget}`
     : `Ready ${readyCount}/${readyTarget}`;
   const isHost = Boolean(user && roomSnapshot && roomSnapshot.room.host.id === user.id);
+  const isDark = resolvedTheme === 'dark';
 
   const canUseMultiplayer = Boolean(user);
 
@@ -2043,30 +2053,36 @@ function MultiplayerScreen({
   }, [isHost, launchChallengeIfStarted, mapRoomToChallengeSnapshot, roomSnapshot?.room.code, roomSnapshot?.room.status]);
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
+    <div className={cn('min-h-screen p-6 md:p-10', isDark ? 'bg-[#0b0f17] text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]')}>
       <div className="max-w-5xl mx-auto">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
           <div className="flex items-center gap-4">
             <button
               onClick={onBack}
-              className="p-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-all active:scale-95"
+              className={cn(
+                'p-3 rounded-xl transition-all active:scale-95',
+                isDark ? 'bg-white/10 text-white border border-white/10 hover:bg-white/15' : 'bg-black text-white hover:bg-gray-800',
+              )}
               aria-label="Back"
             >
               <ChevronLeft size={20} />
             </button>
             <div>
               <h1 className="text-3xl font-black tracking-tight">Multiplayer Rooms</h1>
-              <p className="text-sm text-gray-500">Create rooms up to 8 players and race for multi-round points.</p>
+              <p className={cn('text-sm', isDark ? 'text-gray-300' : 'text-gray-500')}>Create rooms up to 8 players and race for multi-round points.</p>
             </div>
           </div>
         </div>
 
         {!canUseMultiplayer && (
-          <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          <div className={cn('mb-5 rounded-2xl border p-4 text-sm', isDark ? 'border-amber-300/35 bg-amber-500/10 text-amber-200' : 'border-amber-200 bg-amber-50 text-amber-800')}>
             You can play multiplayer as guest. Rooms with any guest are marked unranked.
             <button
               onClick={() => void onGuestBootstrap()}
-              className="ml-2 inline-flex items-center rounded-lg bg-black px-3 py-1.5 text-xs font-bold text-white hover:bg-gray-800"
+              className={cn(
+                'ml-2 inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-bold transition-all',
+                isDark ? 'bg-white/15 text-white hover:bg-white/25 border border-white/15' : 'bg-black text-white hover:bg-gray-800',
+              )}
             >
               Continue as Guest
             </button>
@@ -2074,13 +2090,13 @@ function MultiplayerScreen({
         )}
 
         <div className="grid gap-4 md:grid-cols-2">
-          <div className="bg-white rounded-3xl p-6 border border-black/5 shadow-sm">
+          <div className={cn('rounded-3xl p-6 border shadow-sm', isDark ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/5')}>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Create Room</p>
-            <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Difficulty</label>
+            <label className={cn('text-xs font-bold uppercase tracking-[0.15em]', isDark ? 'text-gray-300' : 'text-gray-500')}>Difficulty</label>
             <select
               value={difficulty}
               onChange={(e) => setDifficulty(e.target.value as RoomDifficulty)}
-              className="mt-2 w-full mb-3 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+              className={cn('mt-2 w-full mb-3 px-3 py-2 rounded-lg border text-sm', isDark ? 'bg-white/5 border-white/15 text-white' : 'bg-white border-black/10 text-black')}
             >
               {ROOM_DIFFICULTY_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -2088,53 +2104,53 @@ function MultiplayerScreen({
                 </option>
               ))}
             </select>
-            <p className="mb-4 text-xs text-gray-500">
+            <p className={cn('mb-4 text-xs', isDark ? 'text-gray-300' : 'text-gray-500')}>
               Round levels will run from {difficultyStartLevel} to {difficultyEndLevel}.
             </p>
-            <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Rounds (1-10)</label>
+            <label className={cn('text-xs font-bold uppercase tracking-[0.15em]', isDark ? 'text-gray-300' : 'text-gray-500')}>Rounds (1-10)</label>
             <input
               type="number"
               min={1}
               max={10}
               value={totalRounds}
               onChange={(e) => setTotalRounds(Math.min(10, Math.max(1, Number(e.target.value || 1))))}
-              className="mt-2 w-full mb-4 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+              className={cn('mt-2 w-full mb-4 px-3 py-2 rounded-lg border text-sm', isDark ? 'bg-white/5 border-white/15 text-white' : 'bg-white border-black/10 text-black')}
             />
             <div className="flex gap-2">
               <button
                 onClick={handleCreate}
                 disabled={loading}
-                className="flex-1 py-2.5 rounded-xl bg-black text-white text-sm font-bold hover:bg-gray-800 disabled:opacity-50"
+                className={cn('flex-1 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 transition-all', isDark ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800')}
               >
                 {loading ? 'Working...' : 'Create Room'}
               </button>
             </div>
           </div>
 
-          <div className="bg-white rounded-3xl p-6 border border-black/5 shadow-sm">
+          <div className={cn('rounded-3xl p-6 border shadow-sm', isDark ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/5')}>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Join Room</p>
             {user?.provider === 'guest' && (
               <>
-                <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Nickname (Guest)</label>
+                <label className={cn('text-xs font-bold uppercase tracking-[0.15em]', isDark ? 'text-gray-300' : 'text-gray-500')}>Nickname (Guest)</label>
                 <input
                   type="text"
                   value={guestNickname}
                   onChange={(e) => setGuestNickname(e.target.value.slice(0, 24))}
                   placeholder="Your name"
-                  className="mt-2 w-full mb-3 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+                  className={cn('mt-2 w-full mb-3 px-3 py-2 rounded-lg border text-sm', isDark ? 'bg-white/5 border-white/15 text-white placeholder:text-gray-400' : 'bg-white border-black/10 text-black')}
                 />
-                <p className="mb-3 text-[11px] text-gray-500">
+                <p className={cn('mb-3 text-[11px]', isDark ? 'text-gray-300' : 'text-gray-500')}>
                   Displayed as <span className="font-semibold">{(guestNickname.trim() || 'Guest')} (Guest)</span>
                 </p>
               </>
             )}
-            <label className="text-xs text-gray-500 font-bold uppercase tracking-[0.15em]">Code</label>
+            <label className={cn('text-xs font-bold uppercase tracking-[0.15em]', isDark ? 'text-gray-300' : 'text-gray-500')}>Code</label>
             <input
               type="text"
               value={joinCode}
               onChange={(e) => setJoinCode(sanitizeCode(e.target.value))}
               placeholder="EXAMPLE: A1B2C3D4"
-              className="mt-2 w-full mb-4 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white uppercase tracking-wider"
+              className={cn('mt-2 w-full mb-4 px-3 py-2 rounded-lg border text-sm uppercase tracking-wider', isDark ? 'bg-white/5 border-white/15 text-white placeholder:text-gray-400' : 'bg-white border-black/10 text-black')}
             />
             <button
               onClick={handleJoin}
@@ -2147,13 +2163,13 @@ function MultiplayerScreen({
         </div>
 
         {error && (
-          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <div className={cn('mt-4 rounded-2xl border p-4 text-sm', isDark ? 'border-red-300/30 bg-red-500/10 text-red-200' : 'border-red-200 bg-red-50 text-red-700')}>
             {error}
           </div>
         )}
 
         {snapshot && (
-          <div className="mt-6 bg-gray-900 text-white rounded-[32px] p-6 shadow-2xl">
+          <div className={cn('mt-6 rounded-[32px] p-6 shadow-2xl border', isDark ? 'bg-[#151a25] text-white border-white/10' : 'bg-white text-[#1a1a1a] border-black/10')}>
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-5">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold mb-1">Active Room</p>
@@ -2161,12 +2177,12 @@ function MultiplayerScreen({
                   <Link2 size={20} />
                   {snapshot.challenge.code}
                 </h2>
-                <p className="text-sm text-gray-300 mt-1">
-                  Level {snapshot.challenge.levelId} • {snapshot.challenge.status.toUpperCase()} • {snapshot.challenge.isRanked ? 'RANKED' : 'UNRANKED'}
+                <p className={cn('text-sm mt-1', isDark ? 'text-gray-300' : 'text-gray-600')}>
+                  Level {snapshot.challenge.levelId} | {snapshot.challenge.status.toUpperCase()} | {snapshot.challenge.isRanked ? 'RANKED' : 'UNRANKED'}
                 </p>
                 {roomSnapshot && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    {ROOM_DIFFICULTY_OPTIONS.find((option) => option.value === roomSnapshot.room.difficulty)?.label ?? 'Moderate'} • Round {Math.max(1, roomSnapshot.room.currentRound)}/{roomSnapshot.room.totalRounds} • Players {roomSnapshot.players.length}/{roomSnapshot.room.maxPlayers}
+                  <p className={cn('text-xs mt-1', isDark ? 'text-gray-400' : 'text-gray-500')}>
+                    {ROOM_DIFFICULTY_OPTIONS.find((option) => option.value === roomSnapshot.room.difficulty)?.label ?? 'Moderate'} | Round {Math.max(1, roomSnapshot.room.currentRound)}/{roomSnapshot.room.totalRounds} | Players {roomSnapshot.players.length}/{roomSnapshot.room.maxPlayers}
                   </p>
                 )}
               </div>
@@ -2174,7 +2190,7 @@ function MultiplayerScreen({
                 <button
                   onClick={handleRefresh}
                   disabled={loading || launching}
-                  className="px-3 py-2 rounded-xl bg-white/10 text-xs font-bold hover:bg-white/20"
+                  className={cn('px-3 py-2 rounded-xl text-xs font-bold transition-all', isDark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-800')}
                 >
                   Refresh
                 </button>
@@ -2188,7 +2204,7 @@ function MultiplayerScreen({
                   <button
                     onClick={() => { void handleReadyAndPlay(); }}
                     disabled={loading || launching || (roomSnapshot?.players.length ?? 0) < 2}
-                    className="px-3 py-2 rounded-xl bg-white text-black text-xs font-bold hover:bg-gray-100 disabled:opacity-60"
+                    className={cn('px-3 py-2 rounded-xl text-xs font-bold disabled:opacity-60 transition-all', isDark ? 'bg-white text-black hover:bg-gray-100' : 'bg-black text-white hover:bg-gray-800')}
                   >
                     {loading || launching ? 'Working...' : 'Start Tournament'}
                   </button>
@@ -2197,18 +2213,18 @@ function MultiplayerScreen({
             </div>
 
             {waitingForOtherReady && !snapshot.challenge.startAt && (
-              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <div className={cn('mb-4 rounded-xl border px-3 py-2 text-xs', isDark ? 'border-amber-300/35 bg-amber-500/10 text-amber-200' : 'border-amber-200 bg-amber-50 text-amber-800')}>
                 Waiting for host to start the tournament.
               </div>
             )}
 
             {!snapshot.challenge.startAt && (
-              <div className="mb-4 rounded-xl border border-white/15 bg-white/5 px-3 py-3">
-                <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.18em] text-gray-300 mb-2">
+              <div className={cn('mb-4 rounded-xl border px-3 py-3', isDark ? 'border-white/15 bg-white/5' : 'border-black/10 bg-gray-50')}>
+                <div className={cn('flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.18em] mb-2', isDark ? 'text-gray-300' : 'text-gray-600')}>
                   <span>Pre-Match Ready</span>
                   <span>{readinessLabel}</span>
                 </div>
-                <div className="h-2 w-full rounded-full bg-white/15 overflow-hidden">
+                <div className={cn('h-2 w-full rounded-full overflow-hidden', isDark ? 'bg-white/15' : 'bg-black/10')}>
                   <div
                     className="h-full bg-emerald-400 rounded-full transition-all duration-300"
                     style={{ width: `${readyPercent}%` }}
@@ -2218,25 +2234,25 @@ function MultiplayerScreen({
             )}
 
             {shareLink && (
-              <div className="mb-5 p-3 rounded-xl bg-white/6 text-xs text-gray-300 break-all">
+              <div className={cn('mb-5 p-3 rounded-xl text-xs break-all', isDark ? 'bg-white/6 text-gray-300' : 'bg-gray-100 text-gray-700')}>
                 {shareLink}
               </div>
             )}
 
             <div className="grid gap-2">
               {snapshot.players.map((player) => (
-                <div key={player.userId} className="rounded-2xl bg-white/6 px-4 py-3 flex items-center justify-between">
+                <div key={player.userId} className={cn('rounded-2xl px-4 py-3 flex items-center justify-between', isDark ? 'bg-white/6' : 'bg-gray-100')}>
                   <div>
                     <p className="font-bold">{player.displayName}</p>
-                    <p className="text-xs text-gray-400">
+                    <p className={cn('text-xs', isDark ? 'text-gray-400' : 'text-gray-500')}>
                       {player.provider}
                       {' '}
-                      •
+                      |
                       {' '}
                       {player.status === 'ready' ? 'Ready' : player.status === 'submitted' ? 'Finished' : 'Waiting'}
                     </p>
                   </div>
-                  <div className="text-right text-xs text-gray-300">
+                  <div className={cn('text-right text-xs', isDark ? 'text-gray-300' : 'text-gray-600')}>
                     {player.elapsedSeconds !== null ? (
                       <p>Elapsed: {player.elapsedSeconds}s</p>
                     ) : (
@@ -2248,13 +2264,13 @@ function MultiplayerScreen({
             </div>
 
             {roomSnapshot && (
-              <div className="mt-4 rounded-2xl border border-white/15 bg-white/5 p-4">
+              <div className={cn('mt-4 rounded-2xl border p-4', isDark ? 'border-white/15 bg-white/5' : 'border-black/10 bg-gray-50')}>
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Leaderboard</p>
                 <div className="space-y-1 text-sm">
                   {roomSnapshot.players.map((player, idx) => (
                     <div key={player.userId} className="flex items-center justify-between">
-                      <span className="font-semibold text-gray-100">{idx + 1}. {player.displayName}</span>
-                      <span className="text-emerald-300 font-bold">{player.totalPoints} pts</span>
+                      <span className={cn('font-semibold', isDark ? 'text-gray-100' : 'text-gray-700')}>{idx + 1}. {player.displayName}</span>
+                      <span className={cn('font-bold', isDark ? 'text-emerald-300' : 'text-emerald-700')}>{player.totalPoints} pts</span>
                     </div>
                   ))}
                 </div>
@@ -2262,12 +2278,12 @@ function MultiplayerScreen({
             )}
 
             {roomSnapshot?.activeRound && (
-              <div className="mt-4 rounded-xl border border-white/15 bg-white/5 px-3 py-3">
-                <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.18em] text-gray-300 mb-2">
+              <div className={cn('mt-4 rounded-xl border px-3 py-3', isDark ? 'border-white/15 bg-white/5' : 'border-black/10 bg-gray-50')}>
+                <div className={cn('flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.18em] mb-2', isDark ? 'text-gray-300' : 'text-gray-600')}>
                   <span>Round Progress</span>
                   <span>{roomSnapshot.activeRound.submissions.length}/{roomSnapshot.players.length} Submitted</span>
                 </div>
-                <div className="h-2 w-full rounded-full bg-white/15 overflow-hidden">
+                <div className={cn('h-2 w-full rounded-full overflow-hidden', isDark ? 'bg-white/15' : 'bg-black/10')}>
                   <div
                     className="h-full bg-sky-400 rounded-full transition-all duration-300"
                     style={{ width: `${roomSnapshot.players.length > 0 ? Math.round((roomSnapshot.activeRound.submissions.length / roomSnapshot.players.length) * 100) : 0}%` }}
@@ -2279,23 +2295,23 @@ function MultiplayerScreen({
         )}
 
         {user && user.provider !== 'guest' && multiplayerStats && (
-          <div className="mt-6 bg-white rounded-3xl p-6 border border-black/5 shadow-sm">
+          <div className={cn('mt-6 rounded-3xl p-6 border shadow-sm', isDark ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/5')}>
             <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-3">Multiplayer Stats</p>
             <div className="grid gap-2 md:grid-cols-4 text-sm">
-              <div className="rounded-xl bg-gray-50 px-3 py-2">
-                <p className="text-gray-500">Matches</p>
+              <div className={cn('rounded-xl px-3 py-2', isDark ? 'bg-white/5' : 'bg-gray-50')}>
+                <p className={cn(isDark ? 'text-gray-300' : 'text-gray-500')}>Matches</p>
                 <p className="text-xl font-black">{multiplayerStats.matchesPlayed}</p>
               </div>
-              <div className="rounded-xl bg-gray-50 px-3 py-2">
-                <p className="text-gray-500">Wins</p>
+              <div className={cn('rounded-xl px-3 py-2', isDark ? 'bg-white/5' : 'bg-gray-50')}>
+                <p className={cn(isDark ? 'text-gray-300' : 'text-gray-500')}>Wins</p>
                 <p className="text-xl font-black">{multiplayerStats.wins}</p>
               </div>
-              <div className="rounded-xl bg-gray-50 px-3 py-2">
-                <p className="text-gray-500">Losses</p>
+              <div className={cn('rounded-xl px-3 py-2', isDark ? 'bg-white/5' : 'bg-gray-50')}>
+                <p className={cn(isDark ? 'text-gray-300' : 'text-gray-500')}>Losses</p>
                 <p className="text-xl font-black">{multiplayerStats.losses}</p>
               </div>
-              <div className="rounded-xl bg-gray-50 px-3 py-2">
-                <p className="text-gray-500">Best Time</p>
+              <div className={cn('rounded-xl px-3 py-2', isDark ? 'bg-white/5' : 'bg-gray-50')}>
+                <p className={cn(isDark ? 'text-gray-300' : 'text-gray-500')}>Best Time</p>
                 <p className="text-xl font-black">
                   {multiplayerStats.bestElapsedSeconds !== null ? `${multiplayerStats.bestElapsedSeconds}s` : '-'}
                 </p>
@@ -2423,6 +2439,7 @@ function AccountPanel({
   syncStateLabel,
   googleEnabled,
   googleSlotRef,
+  resolvedTheme,
   onGuestLogin,
   onNicknameLogin,
   onNicknameRegister,
@@ -2434,6 +2451,7 @@ function AccountPanel({
   syncStateLabel: string;
   googleEnabled: boolean;
   googleSlotRef: React.RefObject<HTMLDivElement | null>;
+  resolvedTheme: 'dark' | 'light';
   onGuestLogin: (nickname?: string) => Promise<boolean>;
   onNicknameLogin: (params: { nickname: string; password: string }) => void;
   onNicknameRegister: (nickname: string, password: string) => void;
@@ -2453,6 +2471,7 @@ function AccountPanel({
     .slice(0, 24);
   const nicknameLooksValid = normalizedNicknamePreview.length >= 3;
   const passwordLooksValid = password.length >= 8;
+  const isDark = resolvedTheme === 'dark';
 
   const submitAccount = () => {
     setNicknameSubmitAttempted(true);
@@ -2469,14 +2488,14 @@ function AccountPanel({
 
   return (
     <div className="w-full">
-      <div className="bg-white border border-black/10 rounded-3xl shadow-xl p-4">
+      <div className={cn('rounded-3xl shadow-xl p-4 border', isDark ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/10')}>
         <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Cloud Profile</p>
 
         {user ? (
           <>
-            <p className="text-sm text-gray-600 mb-1">Signed in as</p>
-            <p className="text-base font-black text-black">{user.displayName}</p>
-            <p className="text-xs text-gray-500 mb-3">
+            <p className={cn('text-sm mb-1', isDark ? 'text-gray-300' : 'text-gray-600')}>Signed in as</p>
+            <p className={cn('text-base font-black', isDark ? 'text-white' : 'text-black')}>{user.displayName}</p>
+            <p className={cn('text-xs mb-3', isDark ? 'text-gray-400' : 'text-gray-500')}>
               {user.provider === 'google'
                 ? 'Google account'
                 : user.provider === 'nickname'
@@ -2485,10 +2504,10 @@ function AccountPanel({
                     ? 'Email account'
                     : 'Guest cloud account'}
             </p>
-            <p className="text-xs text-emerald-700 font-bold mb-3">{syncStateLabel}</p>
+            <p className={cn('text-xs font-bold mb-3', isDark ? 'text-emerald-300' : 'text-emerald-700')}>{syncStateLabel}</p>
             <button
               onClick={onLogout}
-              className="w-full py-2.5 rounded-xl border border-black/10 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-all"
+              className={cn('w-full py-2.5 rounded-xl text-sm font-bold transition-all border', isDark ? 'border-white/20 text-gray-200 hover:bg-white/10' : 'border-black/10 text-gray-700 hover:bg-gray-50')}
             >
               Sign Out
             </button>
@@ -2496,14 +2515,14 @@ function AccountPanel({
         ) : (
           <>
             {authLoading && (
-              <p className="text-xs text-gray-500 mb-2">Checking previous session...</p>
+              <p className={cn('text-xs mb-2', isDark ? 'text-gray-300' : 'text-gray-500')}>Checking previous session...</p>
             )}
-            <p className="text-sm text-gray-600 mb-3">
+            <p className={cn('text-sm mb-3', isDark ? 'text-gray-300' : 'text-gray-600')}>
               Sign in to keep levels and stats across devices.
             </p>
             <button
               onClick={() => void onGuestLogin(guestNickname.trim() || undefined)}
-              className="w-full py-2.5 rounded-xl bg-black text-white text-sm font-bold hover:bg-gray-800 transition-all mb-2"
+              className={cn('w-full py-2.5 rounded-xl text-sm font-bold transition-all mb-2', isDark ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800')}
             >
               Continue as Guest
             </button>
@@ -2512,9 +2531,9 @@ function AccountPanel({
               value={guestNickname}
               onChange={(e) => setGuestNickname(e.target.value)}
               placeholder="Optional nickname for guest"
-              className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+              className={cn('w-full mb-2 px-3 py-2 rounded-lg border text-sm', isDark ? 'border-white/15 bg-white/5 text-white placeholder:text-gray-400' : 'border-black/10 bg-white text-black')}
             />
-            <div className="mt-2 border border-black/10 rounded-2xl p-3 bg-gray-50/60">
+            <div className={cn('mt-2 border rounded-2xl p-3', isDark ? 'border-white/10 bg-white/5' : 'border-black/10 bg-gray-50/60')}>
               <div className="flex gap-2 mb-2">
                 <button
                   onClick={() => {
@@ -2523,7 +2542,9 @@ function AccountPanel({
                   }}
                   className={cn(
                     'flex-1 text-xs font-bold rounded-lg py-1.5',
-                    nicknameMode === 'register' ? 'bg-black text-white' : 'bg-white text-gray-600 border border-black/10',
+                    nicknameMode === 'register'
+                      ? (isDark ? 'bg-white text-black' : 'bg-black text-white')
+                      : (isDark ? 'bg-[#1a2130] text-gray-200 border border-white/15' : 'bg-white text-gray-600 border border-black/10'),
                   )}
                 >
                   Create Nickname
@@ -2535,7 +2556,9 @@ function AccountPanel({
                   }}
                   className={cn(
                     'flex-1 text-xs font-bold rounded-lg py-1.5',
-                    nicknameMode === 'signin' ? 'bg-black text-white' : 'bg-white text-gray-600 border border-black/10',
+                    nicknameMode === 'signin'
+                      ? (isDark ? 'bg-white text-black' : 'bg-black text-white')
+                      : (isDark ? 'bg-[#1a2130] text-gray-200 border border-white/15' : 'bg-white text-gray-600 border border-black/10'),
                   )}
                 >
                   Sign In
@@ -2549,13 +2572,13 @@ function AccountPanel({
                   if (nicknameSubmitAttempted) setNicknameSubmitAttempted(false);
                 }}
                 placeholder="Choose a nickname"
-                className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+                className={cn('w-full mb-2 px-3 py-2 rounded-lg border text-sm', isDark ? 'border-white/15 bg-white/5 text-white placeholder:text-gray-400' : 'border-black/10 bg-white text-black')}
               />
               {(nicknameSubmitAttempted || nickname.trim().length > 0) && normalizedNicknamePreview && (
                 <p className="mt-1">
                   Saved as:
                   {' '}
-                  <span className="font-bold text-black">{normalizedNicknamePreview || 'nickname-preview'}</span>
+                  <span className={cn('font-bold', isDark ? 'text-white' : 'text-black')}>{normalizedNicknamePreview || 'nickname-preview'}</span>
                 </p>
               )}
               {nicknameSubmitAttempted && !nicknameLooksValid && (
@@ -2571,7 +2594,7 @@ function AccountPanel({
                   if (nicknameSubmitAttempted) setNicknameSubmitAttempted(false);
                 }}
                 placeholder="Password (min 8 chars)"
-                className="w-full mb-2 px-3 py-2 rounded-lg border border-black/10 text-sm bg-white"
+                className={cn('w-full mb-2 px-3 py-2 rounded-lg border text-sm', isDark ? 'border-white/15 bg-white/5 text-white placeholder:text-gray-400' : 'border-black/10 bg-white text-black')}
               />
               {nicknameMode === 'register' && nicknameSubmitAttempted && !passwordLooksValid && (
                 <p className="mb-2 text-[11px] font-semibold text-amber-700">
@@ -2580,7 +2603,7 @@ function AccountPanel({
               )}
               <button
                 onClick={submitAccount}
-                className="w-full py-2 rounded-lg bg-black text-white text-xs font-bold hover:bg-gray-800 transition-all"
+                className={cn('w-full py-2 rounded-lg text-xs font-bold transition-all', isDark ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800')}
               >
                 {nicknameMode === 'signin' ? 'Sign In' : 'Create Profile'}
               </button>
@@ -2588,7 +2611,7 @@ function AccountPanel({
             {googleEnabled ? (
               <div ref={googleSlotRef} className="w-full min-h-10 flex items-center justify-center mt-2" />
             ) : (
-              <p className="text-xs text-gray-500 mt-2">
+              <p className={cn('text-xs mt-2', isDark ? 'text-gray-300' : 'text-gray-500')}>
                 Google login is disabled until <code>VITE_GOOGLE_CLIENT_ID</code> is set.
               </p>
             )}
@@ -2610,18 +2633,19 @@ function ThemeSettingsCard({
   resolvedTheme: 'dark' | 'light';
   onChange: (mode: ThemeMode) => void;
 }) {
+  const isDark = resolvedTheme === 'dark';
   return (
-    <div className="bg-white border border-black/10 rounded-3xl shadow-xl p-5">
+    <div className={cn('rounded-3xl shadow-xl p-5 border', isDark ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/10')}>
       <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Theme</p>
-      <p className="text-sm text-gray-600 mb-3">
+      <p className={cn('text-sm mb-3', isDark ? 'text-gray-300' : 'text-gray-600')}>
         Current look:
         {' '}
-        <span className="font-bold text-black">{resolvedTheme === 'dark' ? 'Dark' : 'Light'}</span>
+        <span className={cn('font-bold', isDark ? 'text-white' : 'text-black')}>{resolvedTheme === 'dark' ? 'Dark' : 'Light'}</span>
       </p>
       <select
         value={themeMode}
         onChange={(e) => onChange(e.target.value as ThemeMode)}
-        className="w-full text-sm font-semibold rounded-xl border border-black/10 px-3 py-3 bg-white"
+        className={cn('w-full text-sm font-semibold rounded-xl border px-3 py-3', isDark ? 'bg-white/5 border-white/15 text-white' : 'bg-white border-black/10 text-black')}
         aria-label="Theme mode"
       >
         <option value="dark">Dark</option>
@@ -2733,23 +2757,24 @@ function ProfileScreen({
   const membershipLabel = user?.membershipTier === 'pro' ? 'Pro Member' : 'Basic Member';
   const membershipTone = user?.membershipTier === 'pro'
     ? 'bg-emerald-500 text-black'
-    : 'bg-gray-900 text-white';
+    : (resolvedTheme === 'dark' ? 'bg-white text-black' : 'bg-gray-900 text-white');
+  const isDark = resolvedTheme === 'dark';
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5] p-6 md:p-10">
+    <div className={cn('min-h-screen p-6 md:p-10', isDark ? 'bg-[#0b0f17] text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]')}>
       <div className="max-w-5xl mx-auto">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
           <div className="flex items-center gap-4">
             <button
               onClick={onBack}
-              className="p-3 rounded-xl transition-all active:scale-95 bg-black text-white hover:bg-gray-800"
+              className={cn('p-3 rounded-xl transition-all active:scale-95', isDark ? 'bg-white/10 text-white border border-white/10 hover:bg-white/15' : 'bg-black text-white hover:bg-gray-800')}
               aria-label="Back to menu"
             >
               <ChevronLeft size={20} />
             </button>
             <div>
               <h1 className="text-3xl font-black tracking-tight">Profile</h1>
-              <p className="text-sm text-gray-500">Manage account, membership, and theme settings.</p>
+              <p className={cn('text-sm', isDark ? 'text-gray-300' : 'text-gray-500')}>Manage account, membership, and theme settings.</p>
             </div>
           </div>
           <div className={cn('px-4 py-2 rounded-full text-xs font-black uppercase tracking-[0.18em]', membershipTone)}>
@@ -2758,12 +2783,12 @@ function ProfileScreen({
         </div>
 
         {user?.provider === 'email' && !user.emailVerifiedAt && (
-          <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          <div className={cn('mb-6 rounded-2xl border p-4 text-sm', isDark ? 'border-amber-300/35 bg-amber-500/10 text-amber-200' : 'border-amber-200 bg-amber-50 text-amber-800')}>
             <p className="font-bold mb-1">Email confirmation required</p>
             <p className="mb-3">Please confirm your email address to fully secure your PentaBlocks account.</p>
             <button
               onClick={onResendVerification}
-              className="px-4 py-2 rounded-xl bg-amber-500 text-white font-bold hover:bg-amber-600 transition-all"
+              className={cn('px-4 py-2 rounded-xl font-bold transition-all', isDark ? 'bg-amber-300 text-black hover:bg-amber-200' : 'bg-amber-500 text-white hover:bg-amber-600')}
             >
               Resend confirmation email
             </button>
@@ -2775,14 +2800,15 @@ function ProfileScreen({
             user={user}
             authLoading={authLoading}
             authError={authError}
-          syncStateLabel={syncStateLabel}
-          googleEnabled={googleEnabled}
-          googleSlotRef={googleSlotRef}
-          onGuestLogin={onGuestLogin}
-          onNicknameLogin={onNicknameLogin}
-          onNicknameRegister={onNicknameRegister}
-          onLogout={onLogout}
-        />
+            syncStateLabel={syncStateLabel}
+            googleEnabled={googleEnabled}
+            googleSlotRef={googleSlotRef}
+            resolvedTheme={resolvedTheme}
+            onGuestLogin={onGuestLogin}
+            onNicknameLogin={onNicknameLogin}
+            onNicknameRegister={onNicknameRegister}
+            onLogout={onLogout}
+          />
 
           <div className="flex flex-col gap-6">
             <ThemeSettingsCard
@@ -2791,18 +2817,18 @@ function ProfileScreen({
               onChange={onThemeChange}
             />
 
-            <div className="bg-white border border-black/10 rounded-3xl shadow-xl p-5">
+            <div className={cn('rounded-3xl shadow-xl p-5 border', isDark ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/10')}>
               <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Membership</p>
-              <p className="text-lg font-black text-black mb-2">{membershipLabel}</p>
-              <p className="text-sm text-gray-600 mb-2">
+              <p className={cn('text-lg font-black mb-2', isDark ? 'text-white' : 'text-black')}>{membershipLabel}</p>
+              <p className={cn('text-sm mb-2', isDark ? 'text-gray-300' : 'text-gray-600')}>
                 Every new account starts as
                 {' '}
-                <span className="font-bold text-black">Basic</span>.
+                <span className={cn('font-bold', isDark ? 'text-white' : 'text-black')}>Basic</span>.
               </p>
-              <p className="text-sm text-gray-600">
+              <p className={cn('text-sm', isDark ? 'text-gray-300' : 'text-gray-600')}>
                 Pro members see
                 {' '}
-                <span className="font-bold text-black">no ads</span>
+                <span className={cn('font-bold', isDark ? 'text-white' : 'text-black')}>no ads</span>
                 {' '}
                 during play. Upgrade flow can be connected next.
               </p>
@@ -2816,30 +2842,30 @@ function ProfileScreen({
               )}
             </div>
 
-            <div className="bg-white border border-black/10 rounded-3xl shadow-xl p-5">
+            <div className={cn('rounded-3xl shadow-xl p-5 border', isDark ? 'bg-[#151a25] border-white/10' : 'bg-white border-black/10')}>
               <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Status</p>
-              <div className="space-y-2 text-sm text-gray-600">
+              <div className={cn('space-y-2 text-sm', isDark ? 'text-gray-300' : 'text-gray-600')}>
                 <p>
                   Sync:
                   {' '}
-                  <span className="font-bold text-black">{syncStateLabel}</span>
+                  <span className={cn('font-bold', isDark ? 'text-white' : 'text-black')}>{syncStateLabel}</span>
                 </p>
                 <p>
                   Provider:
                   {' '}
-                  <span className="font-bold text-black">{user ? user.provider : 'not signed in'}</span>
+                  <span className={cn('font-bold', isDark ? 'text-white' : 'text-black')}>{user ? user.provider : 'not signed in'}</span>
                 </p>
                 <p>
                   Email:
                   {' '}
-                  <span className="font-bold text-black">
+                  <span className={cn('font-bold', isDark ? 'text-white' : 'text-black')}>
                     {user?.email ?? 'not connected'}
                   </span>
                 </p>
                 <p>
                   Verification:
                   {' '}
-                  <span className="font-bold text-black">
+                  <span className={cn('font-bold', isDark ? 'text-white' : 'text-black')}>
                     {user?.provider === 'email'
                       ? (user.emailVerifiedAt ? 'confirmed' : 'pending')
                       : 'not required'}
@@ -5322,6 +5348,7 @@ export default function App() {
           onGuestBootstrap={handleGuestLogin}
           onGuestNicknameUpdate={handleGuestNicknameUpdate}
           multiplayerStats={multiplayerStats}
+          resolvedTheme={resolvedTheme}
           onToast={showToast}
         />
         {!consent && (
