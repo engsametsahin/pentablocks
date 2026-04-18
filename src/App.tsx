@@ -1618,7 +1618,7 @@ function ArenaScreen({
 }: {
   user: CloudUser | null;
   profile: ArenaProfile | null;
-  phase: 'idle' | 'queuing' | 'pregame' | 'submitting' | 'result';
+  phase: 'idle' | 'queuing' | 'pregame' | 'playing' | 'submitting' | 'result';
   match: ArenaMatch | null;
   queueSeconds: number;
   countdown: number;
@@ -3176,7 +3176,7 @@ export default function App() {
   // ── Arena state ──
   const [arenaProfile, setArenaProfile] = useState<ArenaProfile | null>(null);
   const [arenaMatch, setArenaMatch] = useState<ArenaMatch | null>(null);
-  const [arenaPhase, setArenaPhase] = useState<'idle' | 'queuing' | 'pregame' | 'submitting' | 'result'>('idle');
+  const [arenaPhase, setArenaPhase] = useState<'idle' | 'queuing' | 'pregame' | 'playing' | 'submitting' | 'result'>('idle');
   const [arenaQueueSeconds, setArenaQueueSeconds] = useState(0);
   const [arenaCountdown, setArenaCountdown] = useState(3);
   const [arenaResultSubmitted, setArenaResultSubmitted] = useState(false);
@@ -4310,6 +4310,8 @@ export default function App() {
 
   const startArenaGame = useCallback(
     async (match: ArenaMatch) => {
+      // Prevent pregame effect from re-triggering start on every arenaMatch poll update.
+      setArenaPhase('playing');
       setScreen("game");
       await initGame(match.levelId, "start", {
         mode: "arena",
