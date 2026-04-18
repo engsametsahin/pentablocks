@@ -71,7 +71,7 @@ BEGIN
   END IF;
 
   ALTER TABLE users
-    ADD CONSTRAINT users_provider_check CHECK (provider IN ('guest', 'google', 'email', 'nickname'));
+    ADD CONSTRAINT users_provider_check CHECK (provider IN ('guest', 'google', 'email', 'nickname', 'bot'));
 END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_ci

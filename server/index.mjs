@@ -30,6 +30,7 @@ const ARENA_ELO_K_MASTER    = 16;  // 1800+
 const ARENA_MAX_RATING_DIFF_INITIAL = 200;  // ilk 30sn
 const ARENA_MAX_RATING_DIFF_RELAXED = 400;  // 30-60sn
 // 60sn sonra herhangi biriyle eşleştir
+const ARENA_BOTS_ENABLED = String(process.env.ARENA_BOTS_ENABLED ?? 'true').toLowerCase() !== 'false';
 const ROOM_START_DELAY_SECONDS = 5;
 const ROOM_ROUND_TIMEOUT_SECONDS = 240;
 const ROOM_DEFAULT_MAX_PLAYERS = 8;
@@ -46,6 +47,16 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE ?? '').toLowerCase() === 'tru
 const SMTP_USER = process.env.SMTP_USER ?? '';
 const SMTP_PASS = process.env.SMTP_PASS ?? '';
 const SMTP_FROM = process.env.SMTP_FROM ?? '';
+const ARENA_BOT_PROFILES = [
+  { key: 'spark', rating: 980, names: ['Spark Bot', 'Rookie Bot'] },
+  { key: 'flame', rating: 1100, names: ['Flame Bot', 'Pulse Bot'] },
+  { key: 'ember', rating: 1250, names: ['Ember Bot', 'Core Bot'] },
+  { key: 'blaze', rating: 1425, names: ['Blaze Bot', 'Forge Bot'] },
+  { key: 'storm', rating: 1600, names: ['Storm Bot', 'Volt Bot'] },
+  { key: 'thunder', rating: 1780, names: ['Thunder Bot', 'Nova Bot'] },
+  { key: 'legend', rating: 1980, names: ['Legend Bot', 'Titan Bot'] },
+  { key: 'champion', rating: 2150, names: ['Champion Bot', 'Apex Bot'] },
+];
 
 const mailTransport = SMTP_HOST && SMTP_FROM
   ? nodemailer.createTransport({
@@ -2503,6 +2514,127 @@ function arenaLevelForRating(avgRating) {
   return 82;                          // Legend+ tier
 }
 
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function pickArenaBotProfile(userRating) {
+  const sorted = [...ARENA_BOT_PROFILES].sort((a, b) => Math.abs(a.rating - userRating) - Math.abs(b.rating - userRating));
+  const shortlist = sorted.slice(0, Math.min(4, sorted.length));
+  return shortlist[Math.floor(Math.random() * shortlist.length)] ?? sorted[0];
+}
+
+function buildArenaBotDisplayName(profile) {
+  const base = profile.names[Math.floor(Math.random() * profile.names.length)] ?? 'Arena Bot';
+  return `${base} [BOT]`;
+}
+
+async function ensureArenaBotUser(client, profile) {
+  const loginName = `arena-bot-${profile.key}`;
+  const existing = await client.query(
+    `SELECT id, arena_rating
+     FROM users
+     WHERE provider = 'bot'
+       AND login_name = $1
+     LIMIT 1`,
+    [loginName],
+  );
+  if (existing.rows.length > 0) {
+    return { id: Number(existing.rows[0].id), rating: Number(existing.rows[0].arena_rating ?? profile.rating) };
+  }
+
+  const created = await client.query(
+    `INSERT INTO users
+       (provider, login_name, display_name, membership_tier, arena_rating, arena_matches_played, arena_wins, arena_losses)
+     VALUES
+       ('bot', $1, $2, 'basic', $3, 0, 0, 0)
+     RETURNING id, arena_rating`,
+    [loginName, buildArenaBotDisplayName(profile), profile.rating],
+  );
+  return { id: Number(created.rows[0].id), rating: Number(created.rows[0].arena_rating ?? profile.rating) };
+}
+
+function simulateArenaBotResult({
+  botRating,
+  humanRating,
+  timeoutSeconds,
+  levelId,
+  humanDidFinish,
+}) {
+  const ratingEdge = clampNumber((botRating - humanRating) / 450, -1.25, 1.25);
+  const levelPressure = clampNumber((levelId - 1) / (MAX_LEVEL - 1), 0, 1);
+  let finishChance = 0.74 + (ratingEdge * 0.14) - (levelPressure * 0.16);
+  if (humanDidFinish === false) finishChance += 0.05;
+  if (humanDidFinish === true) finishChance -= 0.03;
+  finishChance = clampNumber(finishChance, 0.2, 0.96);
+
+  const didFinish = Math.random() < finishChance;
+  if (!didFinish) {
+    return { didFinish: false, elapsedSeconds: null, remainingSeconds: null };
+  }
+
+  const speedBase = 0.58 - (ratingEdge * 0.12) + (levelPressure * 0.18);
+  const speedJitter = 0.8 + (Math.random() * 0.45);
+  const elapsedSeconds = clampNumber(
+    Math.round(timeoutSeconds * speedBase * speedJitter),
+    7,
+    Math.max(7, timeoutSeconds - 1),
+  );
+  const remainingSeconds = Math.max(0, timeoutSeconds - elapsedSeconds);
+  return { didFinish: true, elapsedSeconds, remainingSeconds };
+}
+
+async function createArenaMatchRecord(client, {
+  playerAId,
+  playerARating,
+  playerBId,
+  playerBRating,
+}) {
+  const avgRating = Math.round((playerARating + playerBRating) / 2);
+  const levelId = arenaLevelForRating(avgRating);
+  const puzzleSeed = buildPuzzleSeed();
+  const [p1Id, p2Id, p1Rating, p2Rating] = Math.random() < 0.5
+    ? [playerAId, playerBId, playerARating, playerBRating]
+    : [playerBId, playerAId, playerBRating, playerARating];
+
+  let matchCode;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const candidate = buildChallengeCode();
+    const existing = await client.query(
+      `SELECT id FROM arena_matches WHERE code = $1`,
+      [candidate],
+    );
+    if (existing.rows.length === 0) {
+      matchCode = candidate;
+      break;
+    }
+  }
+  if (!matchCode) {
+    matchCode = crypto.randomBytes(6).toString('base64url').toUpperCase().slice(0, 8);
+  }
+
+  await client.query(
+    `INSERT INTO arena_matches
+       (code, level_id, puzzle_seed, player1_id, player2_id,
+        player1_rating, player2_rating, status, start_at, timeout_seconds)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',
+             NOW() + make_interval(secs => $8), $9)`,
+    [
+      matchCode,
+      levelId,
+      puzzleSeed,
+      p1Id,
+      p2Id,
+      p1Rating,
+      p2Rating,
+      ARENA_MATCH_START_DELAY_SECONDS,
+      ARENA_MATCH_TIMEOUT_SECONDS,
+    ],
+  );
+
+  return matchCode;
+}
+
 /** Elo K-factor based on matches played and current rating. */
 function arenaKFactor(matchesPlayed, rating) {
   if (matchesPlayed < 30) return ARENA_ELO_K_PLACEMENT;
@@ -2596,8 +2728,6 @@ async function runArenaMatchmaking(userId, userRating) {
     // Clean expired entries
     await client.query(`DELETE FROM arena_queue WHERE expires_at <= NOW()`);
 
-    const queuedAt = new Date();
-
     // Find best opponent (closest rating, not self, still in queue)
     const opponentQ = await client.query(
       `SELECT q.user_id, q.rating, q.joined_at,
@@ -2611,6 +2741,19 @@ async function runArenaMatchmaking(userId, userRating) {
     );
 
     if (opponentQ.rows.length === 0) {
+      if (ARENA_BOTS_ENABLED) {
+        await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
+        const botProfile = pickArenaBotProfile(userRating);
+        const bot = await ensureArenaBotUser(client, botProfile);
+        const matchCode = await createArenaMatchRecord(client, {
+          playerAId: userId,
+          playerARating: userRating,
+          playerBId: bot.id,
+          playerBRating: bot.rating,
+        });
+        await client.query('COMMIT');
+        return matchCode;
+      }
       // No one waiting — join queue
       await client.query(
         `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
@@ -2625,8 +2768,8 @@ async function runArenaMatchmaking(userId, userRating) {
     }
 
     const opp = opponentQ.rows[0];
-    const ratingDiff = Math.abs(userRating - opp.rating);
-    const waitSecs = opp.wait_seconds ?? 0;
+    const ratingDiff = Math.abs(userRating - Number(opp.rating));
+    const waitSecs = Number(opp.wait_seconds ?? 0);
 
     // Rating diff threshold relaxes over time
     const maxDiff = waitSecs >= 60
@@ -2636,6 +2779,19 @@ async function runArenaMatchmaking(userId, userRating) {
         : ARENA_MAX_RATING_DIFF_INITIAL;
 
     if (ratingDiff > maxDiff) {
+      if (ARENA_BOTS_ENABLED) {
+        await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
+        const botProfile = pickArenaBotProfile(userRating);
+        const bot = await ensureArenaBotUser(client, botProfile);
+        const matchCode = await createArenaMatchRecord(client, {
+          playerAId: userId,
+          playerARating: userRating,
+          playerBId: bot.id,
+          playerBRating: bot.rating,
+        });
+        await client.query('COMMIT');
+        return matchCode;
+      }
       // Not close enough yet — join queue and wait
       await client.query(
         `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
@@ -2655,36 +2811,12 @@ async function runArenaMatchmaking(userId, userRating) {
       [userId, opp.user_id],
     );
 
-    // Determine level
-    const avgRating = Math.round((userRating + opp.rating) / 2);
-    const levelId = arenaLevelForRating(avgRating);
-    const puzzleSeed = buildPuzzleSeed();
-
-    // Randomly assign p1/p2
-    const [p1Id, p2Id, p1Rating, p2Rating] = Math.random() < 0.5
-      ? [userId, Number(opp.user_id), userRating, opp.rating]
-      : [Number(opp.user_id), userId, opp.rating, userRating];
-
-    // Create match
-    let matchCode;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const candidate = buildChallengeCode();
-      const existing = await client.query(
-        `SELECT id FROM arena_matches WHERE code = $1`, [candidate],
-      );
-      if (existing.rows.length === 0) { matchCode = candidate; break; }
-    }
-    if (!matchCode) matchCode = crypto.randomBytes(6).toString('base64url').toUpperCase().slice(0, 8);
-
-    await client.query(
-      `INSERT INTO arena_matches
-         (code, level_id, puzzle_seed, player1_id, player2_id,
-          player1_rating, player2_rating, status, start_at, timeout_seconds)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',
-               NOW() + make_interval(secs => $8), $9)`,
-      [matchCode, levelId, puzzleSeed, p1Id, p2Id, p1Rating, p2Rating,
-       ARENA_MATCH_START_DELAY_SECONDS, ARENA_MATCH_TIMEOUT_SECONDS],
-    );
+    const matchCode = await createArenaMatchRecord(client, {
+      playerAId: userId,
+      playerARating: userRating,
+      playerBId: Number(opp.user_id),
+      playerBRating: Number(opp.rating),
+    });
 
     await client.query('COMMIT');
     return matchCode;
@@ -2702,7 +2834,11 @@ async function finalizeArenaMatchIfReady(matchCode) {
   try {
     await client.query('BEGIN');
     const matchQ = await client.query(
-      `SELECT m.*, u1.arena_matches_played AS p1_mp, u2.arena_matches_played AS p2_mp
+      `SELECT m.*,
+              u1.arena_matches_played AS p1_mp,
+              u2.arena_matches_played AS p2_mp,
+              u1.provider AS p1_provider,
+              u2.provider AS p2_provider
        FROM arena_matches m
        JOIN users u1 ON u1.id = m.player1_id
        JOIN users u2 ON u2.id = m.player2_id
@@ -2713,10 +2849,55 @@ async function finalizeArenaMatchIfReady(matchCode) {
     if (matchQ.rows.length === 0) { await client.query('COMMIT'); return; }
     const match = matchQ.rows[0];
 
-    const resultsQ = await client.query(
+    let resultsQ = await client.query(
       `SELECT * FROM arena_match_results WHERE match_id = $1`,
       [match.id],
     );
+
+    const p1IsBot = match.p1_provider === 'bot';
+    const p2IsBot = match.p2_provider === 'bot';
+    const botUserId = p1IsBot ? Number(match.player1_id) : (p2IsBot ? Number(match.player2_id) : null);
+    const humanUserId = p1IsBot ? Number(match.player2_id) : (p2IsBot ? Number(match.player1_id) : null);
+
+    if (botUserId && humanUserId) {
+      const hasBotResult = resultsQ.rows.some((r) => Number(r.user_id) === botUserId);
+      if (!hasBotResult) {
+        const humanResult = resultsQ.rows.find((r) => Number(r.user_id) === humanUserId) ?? null;
+        const botRating = botUserId === Number(match.player1_id)
+          ? Number(match.player1_rating)
+          : Number(match.player2_rating);
+        const humanRating = humanUserId === Number(match.player1_id)
+          ? Number(match.player1_rating)
+          : Number(match.player2_rating);
+        const simulated = simulateArenaBotResult({
+          botRating,
+          humanRating,
+          timeoutSeconds: Number(match.timeout_seconds),
+          levelId: Number(match.level_id),
+          humanDidFinish: humanResult ? Boolean(humanResult.did_finish) : null,
+        });
+
+        await client.query(
+          `INSERT INTO arena_match_results
+             (match_id, user_id, did_finish, elapsed_seconds, remaining_seconds,
+              rating_before, rating_after, rating_change, submitted_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$6,0,NOW())
+           ON CONFLICT (match_id, user_id) DO NOTHING`,
+          [
+            match.id,
+            botUserId,
+            simulated.didFinish,
+            simulated.elapsedSeconds,
+            simulated.remainingSeconds,
+            botRating,
+          ],
+        );
+        resultsQ = await client.query(
+          `SELECT * FROM arena_match_results WHERE match_id = $1`,
+          [match.id],
+        );
+      }
+    }
 
     const bothSubmitted = resultsQ.rows.length === 2;
     const timedOut = new Date(match.start_at).getTime() + match.timeout_seconds * 1000 < Date.now();
@@ -2761,30 +2942,34 @@ async function finalizeArenaMatchIfReady(matchCode) {
       match.p2_mp ?? 0,
     );
 
-    // Update player1
-    await client.query(
-      `UPDATE users
-       SET arena_rating = $2,
-           arena_matches_played = arena_matches_played + 1,
-           arena_wins  = arena_wins  + $3,
-           arena_losses = arena_losses + $4
-       WHERE id = $1`,
-      [match.player1_id, elo.newRating1,
-       winnerId === Number(match.player1_id) ? 1 : 0,
-       winnerId === Number(match.player2_id) ? 1 : 0],
-    );
-    // Update player2
-    await client.query(
-      `UPDATE users
-       SET arena_rating = $2,
-           arena_matches_played = arena_matches_played + 1,
-           arena_wins  = arena_wins  + $3,
-           arena_losses = arena_losses + $4
-       WHERE id = $1`,
-      [match.player2_id, elo.newRating2,
-       winnerId === Number(match.player2_id) ? 1 : 0,
-       winnerId === Number(match.player1_id) ? 1 : 0],
-    );
+    // Update player1 (skip permanent bot profile progression)
+    if (!p1IsBot) {
+      await client.query(
+        `UPDATE users
+         SET arena_rating = $2,
+             arena_matches_played = arena_matches_played + 1,
+             arena_wins  = arena_wins  + $3,
+             arena_losses = arena_losses + $4
+         WHERE id = $1`,
+        [match.player1_id, elo.newRating1,
+         winnerId === Number(match.player1_id) ? 1 : 0,
+         winnerId === Number(match.player2_id) ? 1 : 0],
+      );
+    }
+    // Update player2 (skip permanent bot profile progression)
+    if (!p2IsBot) {
+      await client.query(
+        `UPDATE users
+         SET arena_rating = $2,
+             arena_matches_played = arena_matches_played + 1,
+             arena_wins  = arena_wins  + $3,
+             arena_losses = arena_losses + $4
+         WHERE id = $1`,
+        [match.player2_id, elo.newRating2,
+         winnerId === Number(match.player2_id) ? 1 : 0,
+         winnerId === Number(match.player1_id) ? 1 : 0],
+      );
+    }
 
     // Upsert results with rating info (in case of timeout DNF, create missing rows)
     const upsertResult = async (uid, ratingBefore, ratingAfter, ratingChange) => {
@@ -2800,8 +2985,12 @@ async function finalizeArenaMatchIfReady(matchCode) {
         [match.id, uid, ratingBefore, ratingAfter, ratingChange],
       );
     };
-    await upsertResult(match.player1_id, match.player1_rating, elo.newRating1, elo.change1);
-    await upsertResult(match.player2_id, match.player2_rating, elo.newRating2, elo.change2);
+    const p1RatingAfter = p1IsBot ? Number(match.player1_rating) : elo.newRating1;
+    const p1RatingChange = p1IsBot ? 0 : elo.change1;
+    const p2RatingAfter = p2IsBot ? Number(match.player2_rating) : elo.newRating2;
+    const p2RatingChange = p2IsBot ? 0 : elo.change2;
+    await upsertResult(match.player1_id, match.player1_rating, p1RatingAfter, p1RatingChange);
+    await upsertResult(match.player2_id, match.player2_rating, p2RatingAfter, p2RatingChange);
 
     // Finalize match
     await client.query(
@@ -2987,6 +3176,7 @@ app.get('/api/arena/leaderboard', async (req, res) => {
       `SELECT id, display_name, arena_rating, arena_matches_played, arena_wins, arena_losses
        FROM users
        WHERE arena_matches_played >= 3
+         AND provider <> 'bot'
        ORDER BY arena_rating DESC, arena_wins DESC
        LIMIT 50`,
     );
