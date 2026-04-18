@@ -347,3 +347,69 @@ ALTER TABLE multiplayer_room_submissions
 
 CREATE INDEX IF NOT EXISTS multiplayer_room_submissions_round_idx
   ON multiplayer_room_submissions (round_id, placement ASC NULLS LAST, elapsed_seconds ASC);
+
+-- ── Arena Mode ────────────────────────────────────────────────────────────────
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS arena_rating INT NOT NULL DEFAULT 1000;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS arena_matches_played INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS arena_wins INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS arena_losses INT NOT NULL DEFAULT 0;
+
+-- Matchmaking queue (one slot per user)
+CREATE TABLE IF NOT EXISTS arena_queue (
+  user_id    BIGINT NOT NULL PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  rating     INT NOT NULL,
+  joined_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '90 seconds')
+);
+
+-- Completed and in-progress 1v1 arena matches
+CREATE TABLE IF NOT EXISTS arena_matches (
+  id              BIGSERIAL PRIMARY KEY,
+  code            TEXT NOT NULL UNIQUE,
+  level_id        INT NOT NULL,
+  puzzle_seed     TEXT NOT NULL,
+  player1_id      BIGINT NOT NULL REFERENCES users(id),
+  player2_id      BIGINT NOT NULL REFERENCES users(id),
+  player1_rating  INT NOT NULL,
+  player2_rating  INT NOT NULL,
+  winner_id       BIGINT REFERENCES users(id),
+  status          TEXT NOT NULL DEFAULT 'pending',
+  start_at        TIMESTAMPTZ,
+  timeout_seconds INT NOT NULL DEFAULT 180,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at     TIMESTAMPTZ
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'arena_matches'
+      AND nsp.nspname = current_schema()
+      AND con.conname = 'arena_matches_status_check'
+  ) THEN
+    ALTER TABLE arena_matches
+      ADD CONSTRAINT arena_matches_status_check
+      CHECK (status IN ('pending', 'active', 'finished', 'aborted'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS arena_matches_player1_idx ON arena_matches (player1_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS arena_matches_player2_idx ON arena_matches (player2_id, created_at DESC);
+
+-- Per-player results inside each arena match
+CREATE TABLE IF NOT EXISTS arena_match_results (
+  match_id          BIGINT NOT NULL REFERENCES arena_matches(id) ON DELETE CASCADE,
+  user_id           BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  did_finish        BOOLEAN NOT NULL DEFAULT FALSE,
+  elapsed_seconds   INT,
+  remaining_seconds INT,
+  rating_before     INT NOT NULL,
+  rating_after      INT NOT NULL,
+  rating_change     INT NOT NULL DEFAULT 0,
+  submitted_at      TIMESTAMPTZ,
+  PRIMARY KEY (match_id, user_id)
+);

@@ -7,6 +7,10 @@ export interface CloudUser {
   membershipTier: 'basic' | 'pro';
   emailVerifiedAt: string | null;
   isAdmin: boolean;
+  arenaRating: number;
+  arenaMatchesPlayed: number;
+  arenaWins: number;
+  arenaLosses: number;
 }
 
 export interface AdminCloudUser extends CloudUser {

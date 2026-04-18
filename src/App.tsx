@@ -5,9 +5,15 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RotateCw, FlipHorizontal, RefreshCw, Trophy, Timer, ChevronRight, ChevronLeft, Lock, Users, User, Star, BarChart3, Target, Zap, Medal, Link2, Copy } from 'lucide-react';
+import { RotateCw, FlipHorizontal, RefreshCw, Trophy, Timer, ChevronRight, ChevronLeft, Lock, Users, User, Star, BarChart3, Target, Zap, Medal, Link2, Copy, Swords, Shield, TrendingUp, Clock, ChevronUp, ChevronDown, Minus } from 'lucide-react';
 import { ALL_PIECES, PENTOMINOES, Piece, Point, rotateShape, flipShape } from './constants';
 import { LEVEL_DATA, LEVEL_P5, LEVEL_BLOCKED } from './level-data';
+import {
+  fetchArenaProfile, joinArenaQueue, leaveArenaQueue, pollArenaQueueStatus,
+  fetchArenaMatch, submitArenaMatchResult,
+  getArenaTier, ARENA_TIERS,
+  type ArenaProfile, type ArenaMatch,
+} from './lib/arena';
 import { analyzeKatamino, solveKatamino } from './solver';
 import { cn } from './lib/utils';
 import { trackEvent } from './lib/analytics';
@@ -64,8 +70,8 @@ function getResponsiveCellSize(viewportWidth: number) {
   return CELL_SIZE;
 }
 
-type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer' | 'profile' | 'admin';
-type GameMode = 'single' | 'multiplayer';
+type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer' | 'profile' | 'admin' | 'arena';
+type GameMode = 'single' | 'multiplayer' | 'arena';
 type RoomDifficulty = 'easy' | 'moderate' | 'hard' | 'very_hard';
 type ThemeMode = 'dark' | 'light' | 'auto';
 
@@ -1128,6 +1134,7 @@ function MenuScreen({
   continueLevel,
   onStats,
   onMultiplayer,
+  onArena,
   canOpenAdmin,
   onAdmin,
   resolvedTheme,
@@ -1137,6 +1144,7 @@ function MenuScreen({
   continueLevel?: number;
   onStats: () => void;
   onMultiplayer: () => void;
+  onArena: () => void;
   canOpenAdmin: boolean;
   onAdmin: () => void;
   resolvedTheme: 'dark' | 'light';
@@ -1202,6 +1210,13 @@ function MenuScreen({
             <Lock size={22} /> Admin
           </button>
         )}
+        <button
+          onClick={onArena}
+          className="relative w-full py-5 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-3 hover:from-red-400 hover:to-orange-400 transition-all active:scale-95 overflow-hidden shadow-lg"
+        >
+          <Swords size={22} /> Arena
+          <span className="absolute top-2 right-3 text-[10px] bg-white/20 text-white px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Ranked</span>
+        </button>
         <button
           onClick={onMultiplayer}
           className={cn(
@@ -1584,6 +1599,136 @@ function StatsScreen({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ArenaScreen({
+  user,
+  profile,
+  phase,
+  match,
+  queueSeconds,
+  countdown,
+  onBack,
+  onJoin,
+  onLeave,
+  onPlayAgain,
+  resolvedTheme,
+}: {
+  user: CloudUser | null;
+  profile: ArenaProfile | null;
+  phase: 'idle' | 'queuing' | 'pregame' | 'submitting' | 'result';
+  match: ArenaMatch | null;
+  queueSeconds: number;
+  countdown: number;
+  onBack: () => void;
+  onJoin: () => void;
+  onLeave: () => void;
+  onPlayAgain: () => void;
+  resolvedTheme: 'dark' | 'light';
+}) {
+  const rating = profile?.rating ?? user?.arenaRating ?? 1000;
+  const tier = getArenaTier(rating);
+  const isGuest = !user || user.provider === 'guest';
+
+  const formatWaitTime = (secs: number) => {
+    if (secs < 60) return `${secs}s`;
+    return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  };
+
+  const isDark = resolvedTheme === 'dark';
+
+  return (
+    <div className={cn('min-h-screen flex flex-col items-center justify-start p-4 pt-12 max-w-md mx-auto', isDark ? 'bg-black text-white' : 'bg-white text-black')}>
+      <div className="w-full flex items-center mb-8">
+        <button onClick={onBack} className={cn('p-2 rounded-xl transition-all', isDark ? 'hover:bg-white/10' : 'hover:bg-black/5')}>
+          <ChevronLeft size={24} />
+        </button>
+        <h1 className="text-2xl font-bold ml-2">Arena</h1>
+      </div>
+
+      {/* Rating card */}
+      <div className={cn('w-full rounded-3xl p-6 mb-6 border-2', tier.bg, tier.border)}>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] font-bold text-gray-500 mb-1">Rating</p>
+            <p className="text-4xl font-black">{rating}</p>
+          </div>
+          <div className={cn('px-4 py-2 rounded-2xl font-bold text-sm', tier.bg, tier.color, 'border', tier.border)}>
+            {tier.name}
+          </div>
+        </div>
+        {profile && (
+          <div className="grid grid-cols-3 gap-3 text-center text-sm">
+            <div>
+              <p className="font-bold">{profile.matchesPlayed}</p>
+              <p className="text-gray-500 text-xs">Played</p>
+            </div>
+            <div>
+              <p className="font-bold text-emerald-600">{profile.wins}</p>
+              <p className="text-gray-500 text-xs">Wins</p>
+            </div>
+            <div>
+              <p className="font-bold text-red-500">{profile.losses}</p>
+              <p className="text-gray-500 text-xs">Losses</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Tier ladder */}
+      <div className={cn('w-full border rounded-2xl p-4 mb-6', isDark ? 'bg-white/5 border-white/10' : 'bg-white border-black/10')}>
+        <p className="text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-3">Tier Ladder</p>
+        <div className="space-y-2">
+          {[...ARENA_TIERS].reverse().map((t) => (
+            <div key={t.name} className={cn('flex items-center justify-between text-sm px-3 py-1.5 rounded-xl', t.name === tier.name ? cn(t.bg, 'font-bold') : '')}>
+              <span className={t.color}>{t.name}</span>
+              <span className="text-gray-400 text-xs">{t.minRating}+</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* CTA */}
+      {phase === 'idle' && (
+        isGuest ? (
+          <div className="w-full text-center p-6 bg-amber-50 border border-amber-200 rounded-2xl">
+            <p className="font-bold text-amber-700 mb-1">Sign in to play Arena</p>
+            <p className="text-sm text-amber-600">Guest accounts cannot join ranked matches.</p>
+          </div>
+        ) : (
+          <button
+            onClick={onJoin}
+            className="w-full py-5 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-2xl font-bold text-lg hover:from-red-600 hover:to-orange-600 transition-all shadow-lg"
+          >
+            <Swords className="inline mr-2 mb-0.5" size={20} />
+            Find Match
+          </button>
+        )
+      )}
+
+      {phase === 'queuing' && (
+        <div className="w-full text-center">
+          <div className="w-16 h-16 border-4 border-red-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="font-bold text-lg mb-1">Finding Opponent…</p>
+          <p className="text-gray-500 text-sm mb-6">{formatWaitTime(queueSeconds)} in queue</p>
+          <button
+            onClick={onLeave}
+            className={cn('w-full py-3 border-2 rounded-2xl font-bold transition-all', isDark ? 'border-white/20 text-gray-300 hover:border-white/40' : 'border-gray-200 text-gray-600 hover:border-gray-400')}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {phase === 'pregame' && match && (
+        <div className="w-full text-center">
+          <p className="text-gray-500 mb-2">vs {match.player1.id === user?.id ? match.player2.displayName : match.player1.displayName}</p>
+          <div className="text-7xl font-black mb-4">{countdown}</div>
+          <p className="text-gray-400 text-sm">Match starting…</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -3002,6 +3147,13 @@ export default function App() {
   const [nextRoundReadyCount, setNextRoundReadyCount] = useState(0);
   const [multiplayerStats, setMultiplayerStats] = useState<MultiplayerStats | null>(null);
   const [multiplayerLockedUntil, setMultiplayerLockedUntil] = useState<number | null>(null);
+  // ── Arena state ──
+  const [arenaProfile, setArenaProfile] = useState<ArenaProfile | null>(null);
+  const [arenaMatch, setArenaMatch] = useState<ArenaMatch | null>(null);
+  const [arenaPhase, setArenaPhase] = useState<'idle' | 'queuing' | 'pregame' | 'submitting' | 'result'>('idle');
+  const [arenaQueueSeconds, setArenaQueueSeconds] = useState(0);
+  const [arenaCountdown, setArenaCountdown] = useState(3);
+  const [arenaResultSubmitted, setArenaResultSubmitted] = useState(false);
   const [multiplayerRoundStartMs, setMultiplayerRoundStartMs] = useState<number | null>(null);
   const [multiplayerRoundDeadlineMs, setMultiplayerRoundDeadlineMs] = useState<number | null>(null);
   const [matchSnapshot, setMatchSnapshot] = useState<MultiplayerChallengeSnapshot | null>(null);
@@ -3055,7 +3207,8 @@ export default function App() {
   const totalPiecesCount = config.p4 + config.p3 + config.p2 + config.p1 + config.p5;
   const blockedCellSet = useMemo(() => new Set(config.blockedCells.map(([r, c]) => `${c},${r}`)), [config]);
   const isMultiplayerRound = gameMode === 'multiplayer' && activeChallenge !== null;
-  const isMultiplayerLocked = isMultiplayerRound && multiplayerLockedUntil !== null && nowTs < multiplayerLockedUntil;
+  const isArenaRound = gameMode === 'arena' && arenaMatch !== null;
+  const isMultiplayerLocked = (isMultiplayerRound || isArenaRound) && multiplayerLockedUntil !== null && nowTs < multiplayerLockedUntil;
   const multiplayerCountdownSeconds = isMultiplayerLocked && multiplayerLockedUntil !== null
     ? Math.max(0, Math.ceil((multiplayerLockedUntil - nowTs) / 1000))
     : 0;
@@ -3233,6 +3386,58 @@ export default function App() {
       return null;
     }
   }, [activeChallenge, activeRoom, authUser, hasSubmittedMatchResult, mapRoomToMatchSnapshot, timeLeft]);
+
+  // ── Arena callbacks ──────────────────────────────────────────────────────────
+
+  const submitArenaResult = useCallback(async (didFinish: boolean, remainingSecondsOverride?: number) => {
+    if (!arenaMatch || arenaResultSubmitted) return;
+    setArenaResultSubmitted(true);
+    setArenaPhase('submitting');
+    const elapsedSeconds = Math.max(0, Math.round((Date.now() - levelStartRef.current) / 1000));
+    const remainingSeconds = Math.max(0, Math.floor(remainingSecondsOverride ?? timeLeft));
+    try {
+      const updated = await submitArenaMatchResult(arenaMatch.code, { didFinish, elapsedSeconds, remainingSeconds });
+      setArenaMatch(updated);
+      setArenaPhase('result');
+      if (authUser) {
+        const profile = await fetchArenaProfile();
+        setArenaProfile(profile);
+      }
+    } catch (err) {
+      setArenaResultSubmitted(false);
+      setArenaPhase('idle');
+      showToast('Failed to submit arena result. Please try again.', 'warning');
+    }
+  }, [arenaMatch, arenaResultSubmitted, authUser, timeLeft, showToast]);
+
+  const handleArenaJoin = useCallback(async () => {
+    if (!authUser || authUser.provider === 'guest') {
+      showToast('Sign in to play Arena mode.', 'warning');
+      return;
+    }
+    try {
+      setArenaPhase('queuing');
+      setArenaQueueSeconds(0);
+      const status = await joinArenaQueue();
+      if (status.status === 'matched' && status.matchCode) {
+        const match = await fetchArenaMatch(status.matchCode);
+        setArenaMatch(match);
+        setArenaPhase('pregame');
+        setArenaCountdown(3);
+      }
+    } catch (err) {
+      setArenaPhase('idle');
+      showToast('Failed to join queue.', 'warning');
+    }
+  }, [authUser, showToast]);
+
+  const handleArenaLeave = useCallback(async () => {
+    try { await leaveArenaQueue(); } catch { /* best-effort */ }
+    setArenaPhase('idle');
+    setArenaQueueSeconds(0);
+    setArenaMatch(null);
+    setArenaResultSubmitted(false);
+  }, []);
 
   const applyConsent = useCallback((personalizedAds: boolean) => {
     const nextConsent: ConsentState = {
@@ -3625,6 +3830,16 @@ export default function App() {
     };
   }, [authUser]);
 
+  // Load arena profile when arena screen is opened
+  useEffect(() => {
+    if (screen !== 'arena' || !authUser || authUser.provider === 'guest') return;
+    let active = true;
+    fetchArenaProfile()
+      .then((p) => { if (active) setArenaProfile(p); })
+      .catch(() => { /* silent — show defaults */ });
+    return () => { active = false; };
+  }, [screen, authUser]);
+
   useEffect(() => {
     if (!consent) return;
     localStorage.setItem(CONSENT_KEY, JSON.stringify(consent));
@@ -3837,6 +4052,28 @@ export default function App() {
     };
   }, [isMultiplayerRound, activeChallenge, activeRoom, authUser, hasSubmittedMatchResult, isGameOver, isWin, mapRoomToMatchSnapshot, nextRoundReadySubmitted, showToast, submitChallengeResult]);
 
+
+  // Arena: poll match until finished/aborted (continues after submit to catch opponent result / timeout finalization)
+  useEffect(() => {
+    if (gameMode !== 'arena' || !arenaMatch) return;
+    if (arenaMatch.status === 'finished' || arenaMatch.status === 'aborted') return;
+    let active = true;
+    const interval = window.setInterval(async () => {
+      try {
+        const updated = await fetchArenaMatch(arenaMatch.code);
+        if (!active) return;
+        setArenaMatch(updated);
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, [gameMode, arenaMatch]);
+
+  // Load arena profile when entering arena screen
+  useEffect(() => {
+    if (screen !== 'arena' || !authUser || authUser.provider === 'guest') return;
+    fetchArenaProfile().then(setArenaProfile).catch(() => undefined);
+  }, [screen, authUser]);
+
   const markLevelComplete = useCallback((lvl: number) => {
     setCompletedLevels(prev => {
       return new Set([...prev, lvl]);
@@ -3941,7 +4178,7 @@ export default function App() {
       setQueuedNextLevel(null);
       setIsAdBreakVisible(false);
     }
-    if (mode === 'multiplayer') {
+    if (mode === 'multiplayer' || mode === 'arena') {
       setMultiplayerRoundStartMs(effectiveStartMs);
       setMultiplayerRoundDeadlineMs(hasDeadlineAt ? deadlineAtMsRaw : null);
       setNowTs(Date.now());
@@ -3995,7 +4232,7 @@ export default function App() {
 
     try {
       generationAttempt += 1;
-      if (mode === 'multiplayer' && options?.puzzleSeed) {
+      if ((mode === 'multiplayer' || mode === 'arena') && options?.puzzleSeed) {
         selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg);
       } else {
         // selectSinglePlayerPuzzle includes pool → live → exhaustive fallback,
@@ -4008,7 +4245,7 @@ export default function App() {
       // Retry with relaxed constraints
       try {
         generationAttempt += 1;
-        if (mode === 'multiplayer' && options?.puzzleSeed) {
+        if ((mode === 'multiplayer' || mode === 'arena') && options?.puzzleSeed) {
           selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg, {
             attemptsPerBatch: 320,
             batchCount: 18,
@@ -4044,6 +4281,69 @@ export default function App() {
     }
     setIsGenerating(false);
   }, [level, updatePlayerStats, recentPuzzleFingerprints]);
+
+  const startArenaGame = useCallback(
+    async (match: ArenaMatch) => {
+      setScreen("game");
+      await initGame(match.levelId, "start", {
+        mode: "arena",
+        puzzleSeed: match.puzzleSeed,
+        startAt: match.startAt ?? undefined,
+        timeoutSeconds: match.timeoutSeconds,
+      });
+    },
+    [initGame],
+  );
+
+  // Queue polling
+  useEffect(() => {
+    if (arenaPhase !== "queuing") return;
+    let cancelled = false;
+    const interval = window.setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const status = await pollArenaQueueStatus();
+        if (cancelled) return;
+        if (status.status === "waiting") {
+          setArenaQueueSeconds(status.waitSeconds);
+        } else if (status.status === "matched" && status.matchCode) {
+          const match = await fetchArenaMatch(status.matchCode);
+          if (cancelled) return;
+          setArenaMatch(match);
+          setArenaPhase("pregame");
+          setArenaCountdown(3);
+        }
+      } catch {
+        setArenaQueueSeconds((s) => s + 2); // fallback on network error
+      }
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [arenaPhase]);
+
+  // Pregame countdown then launch
+  useEffect(() => {
+    if (arenaPhase !== "pregame" || !arenaMatch) return;
+    const startAtMs = arenaMatch.startAt
+      ? Date.parse(arenaMatch.startAt)
+      : Date.now() + 3000;
+    const msLeft = startAtMs - Date.now();
+    if (msLeft <= 0) {
+      void startArenaGame(arenaMatch);
+      return;
+    }
+    const iv = window.setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((startAtMs - Date.now()) / 1000));
+      setArenaCountdown(remaining);
+      if (remaining <= 0) {
+        window.clearInterval(iv);
+        void startArenaGame(arenaMatch);
+      }
+    }, 250);
+    return () => window.clearInterval(iv);
+  }, [arenaPhase, arenaMatch, startArenaGame]);
 
   useEffect(() => {
     if (!isMultiplayerRound || multiplayerLockedUntil === null) return;
@@ -4145,7 +4445,7 @@ export default function App() {
 
   // Multiplayer timer uses server deadline so everyone shares the same end moment.
   useEffect(() => {
-    if (!isMultiplayerRound) return;
+    if (!isMultiplayerRound && !isArenaRound) return;
     if (multiplayerRoundDeadlineMs === null && multiplayerRoundStartMs === null) return;
     if (isWin || isGameOver || isShowingSolution || isSolving || isGenerating) return;
     let didTimeout = false;
@@ -4161,7 +4461,11 @@ export default function App() {
         didTimeout = true;
         setIsGameOver(true);
         setIsActive(false);
-        void submitChallengeResult(false, 0, false);
+        if (gameMode === 'arena') {
+          void submitArenaResult(false, 0);
+        } else {
+          void submitChallengeResult(false, 0, false);
+        }
         trackEvent('level_failed', {
           level,
           reason: 'timeout',
@@ -4249,6 +4553,8 @@ export default function App() {
           markLevelComplete(level);
           saveBestTime(level, timeLeft);
           updatePlayerStats((prev) => ({ ...prev, wins: prev.wins + 1 }));
+        } else if (gameMode === 'arena') {
+          void submitArenaResult(true, timeLeft);
         } else {
           void submitChallengeResult(true);
         }
@@ -4280,7 +4586,7 @@ export default function App() {
         }
       }
     }
-  }, [placedPieces, isShowingSolution, isGameOver, totalPiecesCount, gridWidth, gridHeight, targetCells, level, timeLeft, markLevelComplete, saveBestTime, updatePlayerStats, showToast, completedLevels, bestTimes, isFirstSession, gameMode, submitChallengeResult, isProMember]);
+  }, [placedPieces, isShowingSolution, isGameOver, totalPiecesCount, gridWidth, gridHeight, targetCells, level, timeLeft, markLevelComplete, saveBestTime, updatePlayerStats, showToast, completedLevels, bestTimes, isFirstSession, gameMode, submitChallengeResult, submitArenaResult, isProMember]);
 
   const handleRotate = useCallback((id: string) => {
     unlockAudio();
@@ -4991,6 +5297,7 @@ export default function App() {
           onSinglePlayer={handleMenuSinglePlayer}
           onStats={() => setScreen('stats')}
           onMultiplayer={() => setScreen('multiplayer')}
+          onArena={() => setScreen('arena')}
           canOpenAdmin={Boolean(authUser?.isAdmin)}
           onAdmin={() => setScreen('admin')}
           resolvedTheme={resolvedTheme}
@@ -5016,6 +5323,39 @@ export default function App() {
           onGuestNicknameUpdate={handleGuestNicknameUpdate}
           multiplayerStats={multiplayerStats}
           onToast={showToast}
+        />
+        {!consent && (
+          <ConsentBanner
+            onAcceptPersonalized={() => applyConsent(true)}
+            onAcceptEssential={() => applyConsent(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  if (screen === 'arena') {
+    return (
+      <>
+        <ArenaScreen
+          user={authUser}
+          profile={arenaProfile}
+          phase={arenaPhase}
+          match={arenaMatch}
+          queueSeconds={arenaQueueSeconds}
+          countdown={arenaCountdown}
+          onBack={() => {
+            if (arenaPhase === 'queuing') void handleArenaLeave();
+            setScreen('menu');
+          }}
+          onJoin={handleArenaJoin}
+          onLeave={handleArenaLeave}
+          onPlayAgain={() => {
+            setArenaMatch(null);
+            setArenaResultSubmitted(false);
+            setArenaPhase('idle');
+          }}
+          resolvedTheme={resolvedTheme}
         />
         {!consent && (
           <ConsentBanner
@@ -5589,7 +5929,78 @@ export default function App() {
               initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }}
               className="bg-white p-12 rounded-[48px] shadow-2xl max-w-md w-full text-center"
             >
-              {gameMode === 'multiplayer' ? (
+              {gameMode === 'arena' ? (
+                (() => {
+                  const myResult = arenaMatch?.results.find((r) => r.userId === authUser?.id) ?? null;
+                  const opponent = arenaMatch
+                    ? (arenaMatch.player1.id === authUser?.id ? arenaMatch.player2 : arenaMatch.player1)
+                    : null;
+                  const opponentResult = arenaMatch?.results.find((r) => r.userId === opponent?.id) ?? null;
+                  const matchFinished = arenaMatch?.status === 'finished' || arenaMatch?.status === 'aborted';
+                  const isSubmitting = arenaPhase === 'submitting';
+                  const isWaitingOpponent = !isSubmitting && arenaResultSubmitted && !matchFinished;
+                  const didWin = matchFinished && arenaMatch?.winnerId === authUser?.id;
+                  const ratingChange = myResult?.ratingChange ?? null;
+                  const ratingAfter = myResult?.ratingAfter ?? null;
+                  return (
+                    <>
+                      {(isSubmitting || isWaitingOpponent) ? (
+                        <div className="w-24 h-24 flex items-center justify-center mx-auto mb-6">
+                          <div className="w-16 h-16 border-4 border-gray-300 border-t-black rounded-full animate-spin" />
+                        </div>
+                      ) : (
+                        <div className={cn('w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6', didWin ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600')}>
+                          {didWin ? <Trophy size={48} /> : <Swords size={48} />}
+                        </div>
+                      )}
+                      <h2 className="text-4xl font-bold mb-1">
+                        {isSubmitting ? 'Submitting…' : isWaitingOpponent ? 'Waiting for opponent…' : didWin ? 'Victory!' : 'Defeated'}
+                      </h2>
+                      <p className="text-gray-500 mb-4">Arena · vs {opponent?.displayName ?? '…'}</p>
+                      {matchFinished && ratingChange !== null && ratingAfter !== null && (
+                        <div className="flex items-center justify-center gap-2 mb-6">
+                          <span className="text-2xl font-bold">{ratingAfter}</span>
+                          <span className={cn('text-lg font-semibold', ratingChange >= 0 ? 'text-emerald-600' : 'text-red-500')}>
+                            {ratingChange >= 0 ? '+' : ''}{ratingChange}
+                          </span>
+                        </div>
+                      )}
+                      {matchFinished && opponentResult && (
+                        <div className="bg-gray-50 border border-black/10 rounded-2xl p-4 text-left mb-6 text-sm">
+                          <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Match Result</p>
+                          {[
+                            { label: authUser?.displayName ?? 'You', result: myResult },
+                            { label: opponent?.displayName ?? 'Opponent', result: opponentResult },
+                          ].map(({ label, result }) => (
+                            <div key={label} className="flex justify-between py-1">
+                              <span className="font-bold text-gray-700">{label}</span>
+                              <span className="text-gray-500">
+                                {result?.didFinish && result.elapsedSeconds != null
+                                  ? `${result.elapsedSeconds}s`
+                                  : 'DNF'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex flex-col gap-3">
+                        <button
+                          onClick={() => { setArenaMatch(null); setArenaResultSubmitted(false); setArenaPhase('idle'); setScreen('arena'); }}
+                          className="w-full py-4 bg-black text-white rounded-2xl font-bold hover:bg-gray-800 transition-all"
+                        >
+                          Back to Arena
+                        </button>
+                        <button
+                          onClick={() => setScreen('menu')}
+                          className="w-full py-3 border-2 border-gray-200 rounded-2xl font-bold text-gray-500 hover:border-gray-400 transition-all text-sm"
+                        >
+                          Main Menu
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()
+              ) : gameMode === 'multiplayer' ? (
                 <>
                   {(() => {
                     const me = (matchSnapshot?.players ?? []).find((player) => player.userId === authUser?.id) ?? null;

@@ -21,6 +21,15 @@ const MAX_LEVEL = 100;
 const CHALLENGE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CHALLENGE_CODE_LENGTH = 8;
 const MATCH_START_DELAY_SECONDS = 5;
+const ARENA_QUEUE_TTL_SECONDS = 90;
+const ARENA_MATCH_TIMEOUT_SECONDS = 180;
+const ARENA_MATCH_START_DELAY_SECONDS = 5;
+const ARENA_ELO_K_PLACEMENT = 40;  // ilk 30 maç (placement)
+const ARENA_ELO_K_STANDARD  = 32;  // 1000–1800
+const ARENA_ELO_K_MASTER    = 16;  // 1800+
+const ARENA_MAX_RATING_DIFF_INITIAL = 200;  // ilk 30sn
+const ARENA_MAX_RATING_DIFF_RELAXED = 400;  // 30-60sn
+// 60sn sonra herhangi biriyle eşleştir
 const ROOM_START_DELAY_SECONDS = 5;
 const ROOM_ROUND_TIMEOUT_SECONDS = 240;
 const ROOM_DEFAULT_MAX_PLAYERS = 8;
@@ -99,7 +108,7 @@ function corsHeaders(req, res) {
   res.header('Access-Control-Allow-Origin', allowOrigin);
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
 }
 
 app.use((req, res, next) => {
@@ -945,6 +954,10 @@ function toUserDto(row) {
     membershipTier: row.membership_tier ?? 'basic',
     emailVerifiedAt: row.email_verified_at,
     isAdmin: isAdminUser(row),
+    arenaRating: row.arena_rating ?? 1000,
+    arenaMatchesPlayed: row.arena_matches_played ?? 0,
+    arenaWins: row.arena_wins ?? 0,
+    arenaLosses: row.arena_losses ?? 0,
   };
 }
 
@@ -2475,6 +2488,567 @@ app.get('/api/multiplayer/stats', async (req, res) => {
   } catch (error) {
     console.error('multiplayer stats fetch error', error);
     res.status(500).json({ error: 'multiplayer_stats_fetch_failed' });
+  }
+});
+
+// ── Arena helpers ──────────────────────────────────────────────────────────────
+
+/** Rating-based level selection for arena matches. */
+function arenaLevelForRating(avgRating) {
+  if (avgRating < 1100) return 10;   // Spark/Flame tier
+  if (avgRating < 1300) return 25;   // Ember tier
+  if (avgRating < 1500) return 40;   // Blaze tier
+  if (avgRating < 1700) return 55;   // Thunder tier
+  if (avgRating < 1900) return 68;   // Cyclone tier
+  return 82;                          // Legend+ tier
+}
+
+/** Elo K-factor based on matches played and current rating. */
+function arenaKFactor(matchesPlayed, rating) {
+  if (matchesPlayed < 30) return ARENA_ELO_K_PLACEMENT;
+  if (rating >= 1800) return ARENA_ELO_K_MASTER;
+  return ARENA_ELO_K_STANDARD;
+}
+
+/**
+ * Calculate new ratings after a match.
+ * outcome: 1 = player1 wins, 0 = player2 wins, 0.5 = draw
+ */
+function calculateElo(r1, r2, outcome, mp1, mp2) {
+  const expected1 = 1 / (1 + Math.pow(10, (r2 - r1) / 400));
+  const expected2 = 1 - expected1;
+  const k1 = arenaKFactor(mp1, r1);
+  const k2 = arenaKFactor(mp2, r2);
+  const change1 = Math.round(k1 * (outcome - expected1));
+  const change2 = Math.round(k2 * ((1 - outcome) - expected2));
+  return {
+    newRating1: Math.max(100, r1 + change1),
+    newRating2: Math.max(100, r2 + change2),
+    change1,
+    change2,
+  };
+}
+
+function toArenaMatchDto(row, results = []) {
+  return {
+    code: row.code,
+    levelId: row.level_id,
+    puzzleSeed: row.puzzle_seed,
+    player1: { id: Number(row.player1_id), displayName: row.p1_display_name ?? null, rating: row.player1_rating },
+    player2: { id: Number(row.player2_id), displayName: row.p2_display_name ?? null, rating: row.player2_rating },
+    status: row.status,
+    startAt: row.start_at,
+    timeoutSeconds: row.timeout_seconds,
+    winnerId: row.winner_id ? Number(row.winner_id) : null,
+    finishedAt: row.finished_at,
+    results: results.map((r) => ({
+      userId: Number(r.user_id),
+      didFinish: r.did_finish,
+      elapsedSeconds: r.elapsed_seconds,
+      remainingSeconds: r.remaining_seconds,
+      ratingBefore: r.rating_before,
+      ratingAfter: r.rating_after,
+      ratingChange: r.rating_change,
+      submittedAt: r.submitted_at,
+    })),
+  };
+}
+
+async function fetchArenaMatch(code) {
+  const matchQ = await pool.query(
+    `SELECT m.*,
+            u1.display_name AS p1_display_name,
+            u2.display_name AS p2_display_name
+     FROM arena_matches m
+     JOIN users u1 ON u1.id = m.player1_id
+     JOIN users u2 ON u2.id = m.player2_id
+     WHERE m.code = $1`,
+    [code],
+  );
+  if (matchQ.rows.length === 0) return null;
+  const match = matchQ.rows[0];
+  const resultsQ = await pool.query(
+    `SELECT * FROM arena_match_results WHERE match_id = $1`,
+    [match.id],
+  );
+  return toArenaMatchDto(match, resultsQ.rows);
+}
+
+/** Tries to pair the given user with a waiting opponent. Returns match code or null. */
+async function runArenaMatchmaking(userId, userRating) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Guard: prevent joining queue while already in an active/pending match
+    const activeMatchQ = await client.query(
+      `SELECT code FROM arena_matches
+       WHERE (player1_id = $1 OR player2_id = $1)
+         AND status IN ('pending', 'active')
+       LIMIT 1`,
+      [userId],
+    );
+    if (activeMatchQ.rows.length > 0) {
+      await client.query('COMMIT');
+      return activeMatchQ.rows[0].code;
+    }
+
+    // Clean expired entries
+    await client.query(`DELETE FROM arena_queue WHERE expires_at <= NOW()`);
+
+    const queuedAt = new Date();
+
+    // Find best opponent (closest rating, not self, still in queue)
+    const opponentQ = await client.query(
+      `SELECT q.user_id, q.rating, q.joined_at,
+              EXTRACT(EPOCH FROM (NOW() - q.joined_at))::int AS wait_seconds
+       FROM arena_queue q
+       WHERE q.user_id != $1
+       ORDER BY ABS(q.rating - $2) ASC, q.joined_at ASC
+       LIMIT 1
+       FOR UPDATE SKIP LOCKED`,
+      [userId, userRating],
+    );
+
+    if (opponentQ.rows.length === 0) {
+      // No one waiting — join queue
+      await client.query(
+        `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
+         VALUES ($1, $2, NOW(), NOW() + make_interval(secs => $3))
+         ON CONFLICT (user_id) DO UPDATE
+           SET rating = $2, joined_at = NOW(),
+               expires_at = NOW() + make_interval(secs => $3)`,
+        [userId, userRating, ARENA_QUEUE_TTL_SECONDS],
+      );
+      await client.query('COMMIT');
+      return null;
+    }
+
+    const opp = opponentQ.rows[0];
+    const ratingDiff = Math.abs(userRating - opp.rating);
+    const waitSecs = opp.wait_seconds ?? 0;
+
+    // Rating diff threshold relaxes over time
+    const maxDiff = waitSecs >= 60
+      ? Infinity
+      : waitSecs >= 30
+        ? ARENA_MAX_RATING_DIFF_RELAXED
+        : ARENA_MAX_RATING_DIFF_INITIAL;
+
+    if (ratingDiff > maxDiff) {
+      // Not close enough yet — join queue and wait
+      await client.query(
+        `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
+         VALUES ($1, $2, NOW(), NOW() + make_interval(secs => $3))
+         ON CONFLICT (user_id) DO UPDATE
+           SET rating = $2, joined_at = NOW(),
+               expires_at = NOW() + make_interval(secs => $3)`,
+        [userId, userRating, ARENA_QUEUE_TTL_SECONDS],
+      );
+      await client.query('COMMIT');
+      return null;
+    }
+
+    // Pair found — remove both from queue
+    await client.query(
+      `DELETE FROM arena_queue WHERE user_id IN ($1, $2)`,
+      [userId, opp.user_id],
+    );
+
+    // Determine level
+    const avgRating = Math.round((userRating + opp.rating) / 2);
+    const levelId = arenaLevelForRating(avgRating);
+    const puzzleSeed = buildPuzzleSeed();
+
+    // Randomly assign p1/p2
+    const [p1Id, p2Id, p1Rating, p2Rating] = Math.random() < 0.5
+      ? [userId, Number(opp.user_id), userRating, opp.rating]
+      : [Number(opp.user_id), userId, opp.rating, userRating];
+
+    // Create match
+    let matchCode;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const candidate = buildChallengeCode();
+      const existing = await client.query(
+        `SELECT id FROM arena_matches WHERE code = $1`, [candidate],
+      );
+      if (existing.rows.length === 0) { matchCode = candidate; break; }
+    }
+    if (!matchCode) matchCode = crypto.randomBytes(6).toString('base64url').toUpperCase().slice(0, 8);
+
+    await client.query(
+      `INSERT INTO arena_matches
+         (code, level_id, puzzle_seed, player1_id, player2_id,
+          player1_rating, player2_rating, status, start_at, timeout_seconds)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',
+               NOW() + make_interval(secs => $8), $9)`,
+      [matchCode, levelId, puzzleSeed, p1Id, p2Id, p1Rating, p2Rating,
+       ARENA_MATCH_START_DELAY_SECONDS, ARENA_MATCH_TIMEOUT_SECONDS],
+    );
+
+    await client.query('COMMIT');
+    return matchCode;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Called when a player submits their result. Finalizes if both submitted or timeout. */
+async function finalizeArenaMatchIfReady(matchCode) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const matchQ = await client.query(
+      `SELECT m.*, u1.arena_matches_played AS p1_mp, u2.arena_matches_played AS p2_mp
+       FROM arena_matches m
+       JOIN users u1 ON u1.id = m.player1_id
+       JOIN users u2 ON u2.id = m.player2_id
+       WHERE m.code = $1 AND m.status = 'active'
+       LIMIT 1 FOR UPDATE`,
+      [matchCode],
+    );
+    if (matchQ.rows.length === 0) { await client.query('COMMIT'); return; }
+    const match = matchQ.rows[0];
+
+    const resultsQ = await client.query(
+      `SELECT * FROM arena_match_results WHERE match_id = $1`,
+      [match.id],
+    );
+
+    const bothSubmitted = resultsQ.rows.length === 2;
+    const timedOut = new Date(match.start_at).getTime() + match.timeout_seconds * 1000 < Date.now();
+
+    if (!bothSubmitted && !timedOut) { await client.query('COMMIT'); return; }
+
+    // Determine winner
+    const r1 = resultsQ.rows.find((r) => Number(r.user_id) === Number(match.player1_id));
+    const r2 = resultsQ.rows.find((r) => Number(r.user_id) === Number(match.player2_id));
+
+    let winnerId = null;
+    let eloOutcome = 0.5; // default draw
+
+    const finish1 = r1?.did_finish ?? false;
+    const finish2 = r2?.did_finish ?? false;
+
+    if (finish1 && !finish2) {
+      winnerId = Number(match.player1_id);
+      eloOutcome = 1;
+    } else if (!finish1 && finish2) {
+      winnerId = Number(match.player2_id);
+      eloOutcome = 0;
+    } else if (finish1 && finish2) {
+      // Both finished — faster wins
+      if ((r1.elapsed_seconds ?? 99999) < (r2.elapsed_seconds ?? 99999)) {
+        winnerId = Number(match.player1_id);
+        eloOutcome = 1;
+      } else if ((r2.elapsed_seconds ?? 99999) < (r1.elapsed_seconds ?? 99999)) {
+        winnerId = Number(match.player2_id);
+        eloOutcome = 0;
+      }
+      // exact tie → draw (eloOutcome stays 0.5)
+    }
+    // both DNF → draw
+
+    // Calculate Elo
+    const elo = calculateElo(
+      match.player1_rating,
+      match.player2_rating,
+      eloOutcome,
+      match.p1_mp ?? 0,
+      match.p2_mp ?? 0,
+    );
+
+    // Update player1
+    await client.query(
+      `UPDATE users
+       SET arena_rating = $2,
+           arena_matches_played = arena_matches_played + 1,
+           arena_wins  = arena_wins  + $3,
+           arena_losses = arena_losses + $4
+       WHERE id = $1`,
+      [match.player1_id, elo.newRating1,
+       winnerId === Number(match.player1_id) ? 1 : 0,
+       winnerId === Number(match.player2_id) ? 1 : 0],
+    );
+    // Update player2
+    await client.query(
+      `UPDATE users
+       SET arena_rating = $2,
+           arena_matches_played = arena_matches_played + 1,
+           arena_wins  = arena_wins  + $3,
+           arena_losses = arena_losses + $4
+       WHERE id = $1`,
+      [match.player2_id, elo.newRating2,
+       winnerId === Number(match.player2_id) ? 1 : 0,
+       winnerId === Number(match.player1_id) ? 1 : 0],
+    );
+
+    // Upsert results with rating info (in case of timeout DNF, create missing rows)
+    const upsertResult = async (uid, ratingBefore, ratingAfter, ratingChange) => {
+      await client.query(
+        `INSERT INTO arena_match_results
+           (match_id, user_id, did_finish, elapsed_seconds, remaining_seconds,
+            rating_before, rating_after, rating_change, submitted_at)
+         VALUES ($1,$2,FALSE,NULL,NULL,$3,$4,$5,NOW())
+         ON CONFLICT (match_id, user_id) DO UPDATE
+           SET rating_before = $3,
+               rating_after  = $4,
+               rating_change = $5`,
+        [match.id, uid, ratingBefore, ratingAfter, ratingChange],
+      );
+    };
+    await upsertResult(match.player1_id, match.player1_rating, elo.newRating1, elo.change1);
+    await upsertResult(match.player2_id, match.player2_rating, elo.newRating2, elo.change2);
+
+    // Finalize match
+    await client.query(
+      `UPDATE arena_matches
+       SET status = 'finished', winner_id = $2, finished_at = NOW()
+       WHERE id = $1`,
+      [match.id, winnerId],
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('arena finalize error', err);
+  } finally {
+    client.release();
+  }
+}
+
+// ── Arena endpoints ────────────────────────────────────────────────────────────
+
+/** GET /api/arena/me — kendi arena profili */
+app.get('/api/arena/me', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+  res.json({
+    rating: user.arena_rating ?? 1000,
+    matchesPlayed: user.arena_matches_played ?? 0,
+    wins: user.arena_wins ?? 0,
+    losses: user.arena_losses ?? 0,
+  });
+});
+
+/** POST /api/arena/queue/join — kuyruğa gir, eşleşince match code döner */
+app.post('/api/arena/queue/join', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  // Guest'ler ranked oynayamaz
+  if (user.provider === 'guest') {
+    res.status(403).json({ error: 'guests_cannot_play_arena' });
+    return;
+  }
+
+  try {
+    const matchCode = await runArenaMatchmaking(Number(user.id), user.arena_rating ?? 1000);
+    if (matchCode) {
+      // Activate match
+      await pool.query(
+        `UPDATE arena_matches SET status = 'active' WHERE code = $1 AND status = 'pending'`,
+        [matchCode],
+      );
+      res.json({ status: 'matched', matchCode });
+    } else {
+      res.json({ status: 'waiting' });
+    }
+  } catch (err) {
+    console.error('arena queue join error', err);
+    res.status(500).json({ error: 'arena_queue_join_failed' });
+  }
+});
+
+/** DELETE /api/arena/queue/leave — kuyruktan çık */
+app.delete('/api/arena/queue/leave', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+  try {
+    await pool.query(`DELETE FROM arena_queue WHERE user_id = $1`, [user.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('arena queue leave error', err);
+    res.status(500).json({ error: 'arena_queue_leave_failed' });
+  }
+});
+
+/** GET /api/arena/queue/status — kuyruk durumu (polling için) */
+app.get('/api/arena/queue/status', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+  try {
+    // Check if user was already matched (pending/active match)
+    const matchQ = await pool.query(
+      `SELECT code FROM arena_matches
+       WHERE (player1_id = $1 OR player2_id = $1)
+         AND status IN ('pending', 'active')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [user.id],
+    );
+    if (matchQ.rows.length > 0) {
+      res.json({ status: 'matched', matchCode: matchQ.rows[0].code });
+      return;
+    }
+    // Check if still in queue
+    const queueQ = await pool.query(
+      `SELECT joined_at, expires_at FROM arena_queue WHERE user_id = $1`,
+      [user.id],
+    );
+    if (queueQ.rows.length > 0) {
+      const row = queueQ.rows[0];
+      const waitSeconds = Math.round((Date.now() - new Date(row.joined_at).getTime()) / 1000);
+      res.json({ status: 'waiting', waitSeconds });
+    } else {
+      res.json({ status: 'idle' });
+    }
+  } catch (err) {
+    console.error('arena queue status error', err);
+    res.status(500).json({ error: 'arena_queue_status_failed' });
+  }
+});
+
+/** GET /api/arena/match/:code — maç bilgisi */
+app.get('/api/arena/match/:code', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+  try {
+    // Trigger timeout-based finalization on every poll so abandoned matches resolve.
+    await finalizeArenaMatchIfReady(req.params.code);
+    const dto = await fetchArenaMatch(req.params.code);
+    if (!dto) { res.status(404).json({ error: 'arena_match_not_found' }); return; }
+    // Only players can see the match
+    if (dto.player1.id !== Number(user.id) && dto.player2.id !== Number(user.id)) {
+      res.status(403).json({ error: 'arena_match_forbidden' }); return;
+    }
+    res.json({ match: dto });
+  } catch (err) {
+    console.error('arena match fetch error', err);
+    res.status(500).json({ error: 'arena_match_fetch_failed' });
+  }
+});
+
+/** POST /api/arena/match/:code/submit — sonuç gönder */
+app.post('/api/arena/match/:code/submit', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const { didFinish, elapsedSeconds, remainingSeconds } = req.body ?? {};
+
+  try {
+    const matchQ = await pool.query(
+      `SELECT * FROM arena_matches WHERE code = $1 LIMIT 1`,
+      [req.params.code],
+    );
+    if (matchQ.rows.length === 0) {
+      res.status(404).json({ error: 'arena_match_not_found' }); return;
+    }
+    const match = matchQ.rows[0];
+    const userId = Number(user.id);
+    if (Number(match.player1_id) !== userId && Number(match.player2_id) !== userId) {
+      res.status(403).json({ error: 'arena_match_forbidden' }); return;
+    }
+    if (match.status !== 'active') {
+      res.status(409).json({ error: 'arena_match_not_active' }); return;
+    }
+
+    const myRating = Number(match.player1_id) === userId ? match.player1_rating : match.player2_rating;
+
+    await pool.query(
+      `INSERT INTO arena_match_results
+         (match_id, user_id, did_finish, elapsed_seconds, remaining_seconds,
+          rating_before, rating_after, rating_change, submitted_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$6,0,NOW())
+       ON CONFLICT (match_id, user_id) DO NOTHING`,
+      [match.id, userId, !!didFinish,
+       typeof elapsedSeconds === 'number' ? elapsedSeconds : null,
+       typeof remainingSeconds === 'number' ? remainingSeconds : null,
+       myRating],
+    );
+
+    await finalizeArenaMatchIfReady(req.params.code);
+
+    const dto = await fetchArenaMatch(req.params.code);
+    res.json({ match: dto });
+  } catch (err) {
+    console.error('arena match submit error', err);
+    res.status(500).json({ error: 'arena_match_submit_failed' });
+  }
+});
+
+/** GET /api/arena/leaderboard — top 50 */
+app.get('/api/arena/leaderboard', async (req, res) => {
+  try {
+    const q = await pool.query(
+      `SELECT id, display_name, arena_rating, arena_matches_played, arena_wins, arena_losses
+       FROM users
+       WHERE arena_matches_played >= 3
+       ORDER BY arena_rating DESC, arena_wins DESC
+       LIMIT 50`,
+    );
+    res.json({
+      leaderboard: q.rows.map((row, i) => ({
+        rank: i + 1,
+        userId: Number(row.id),
+        displayName: row.display_name,
+        rating: row.arena_rating,
+        matchesPlayed: row.arena_matches_played,
+        wins: row.arena_wins,
+        losses: row.arena_losses,
+      })),
+    });
+  } catch (err) {
+    console.error('arena leaderboard error', err);
+    res.status(500).json({ error: 'arena_leaderboard_failed' });
+  }
+});
+
+/** GET /api/arena/history — son 20 maç */
+app.get('/api/arena/history', async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+  try {
+    const q = await pool.query(
+      `SELECT m.code, m.level_id, m.status, m.winner_id, m.created_at, m.finished_at,
+              u1.display_name AS p1_name, u2.display_name AS p2_name,
+              m.player1_id, m.player2_id, m.player1_rating, m.player2_rating,
+              r.rating_before, r.rating_after, r.rating_change,
+              r.did_finish, r.elapsed_seconds
+       FROM arena_matches m
+       JOIN users u1 ON u1.id = m.player1_id
+       JOIN users u2 ON u2.id = m.player2_id
+       LEFT JOIN arena_match_results r ON r.match_id = m.id AND r.user_id = $1
+       WHERE (m.player1_id = $1 OR m.player2_id = $1)
+         AND m.status = 'finished'
+       ORDER BY m.finished_at DESC
+       LIMIT 20`,
+      [user.id],
+    );
+    res.json({
+      history: q.rows.map((row) => {
+        const isP1 = Number(row.player1_id) === Number(user.id);
+        const opponent = { displayName: isP1 ? row.p2_name : row.p1_name };
+        return {
+          code: row.code,
+          levelId: row.level_id,
+          opponentName: opponent.displayName,
+          myRatingBefore: row.rating_before,
+          myRatingAfter: row.rating_after,
+          ratingChange: row.rating_change ?? 0,
+          didWin: Number(row.winner_id) === Number(user.id),
+          didFinish: row.did_finish,
+          elapsedSeconds: row.elapsed_seconds,
+          finishedAt: row.finished_at,
+        };
+      }),
+    });
+  } catch (err) {
+    console.error('arena history error', err);
+    res.status(500).json({ error: 'arena_history_failed' });
   }
 });
 
