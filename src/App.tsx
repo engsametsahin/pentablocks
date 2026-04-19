@@ -3219,6 +3219,8 @@ export default function App() {
   const stashOrderRef = useRef<string[]>([]);
   const stashScrollRef = useRef<HTMLDivElement>(null);
   const initGameRunIdRef = useRef(0);
+  const expectedPuzzlePiecesRef = useRef<Piece[] | null>(null);
+  const hasAutoReconciledPuzzleRef = useRef(false);
   const pointerTrackRef = useRef<PointerTrack | null>(null);
   const touchTrackRef = pointerTrackRef;
 
@@ -5595,8 +5597,22 @@ export default function App() {
     ...placedPieces.map((piece) => [piece.id, piece] as const),
     ...availablePieces.map((piece) => [piece.id, piece] as const),
   ]);
-  const stashRenderOrder = (stashSlotOrder.length > 0 ? stashSlotOrder : availablePieces.map((piece) => piece.id))
-    .filter((id, index, arr) => arr.indexOf(id) === index);
+  const stashRenderOrder = useMemo(() => {
+    const currentIds = Array.from(new Set([
+      ...availablePieces.map((piece) => piece.id),
+      ...placedPieces.map((piece) => piece.id),
+    ]));
+
+    const orderSource = stashSlotOrder.length > 0 ? stashSlotOrder : currentIds;
+    const nextOrder = orderSource.filter((id, index, arr) => (
+      arr.indexOf(id) === index && currentIds.includes(id)
+    ));
+
+    for (const id of currentIds) {
+      if (!nextOrder.includes(id)) nextOrder.push(id);
+    }
+    return nextOrder;
+  }, [availablePieces, placedPieces, stashSlotOrder]);
 
   return (
     <div
@@ -5684,6 +5700,18 @@ export default function App() {
           ) : (
             <button
               onClick={() => {
+                if (gameMode === 'arena' && arenaMatch) {
+                  const startAtMs = arenaMatch.startAt ? Date.parse(arenaMatch.startAt) : Date.now();
+                  const deadlineAt = new Date(startAtMs + arenaMatch.timeoutSeconds * 1000).toISOString();
+                  void initGame(arenaMatch.levelId, 'restart', {
+                    mode: 'arena',
+                    puzzleSeed: arenaMatch.puzzleSeed,
+                    startAt: arenaMatch.startAt ?? undefined,
+                    deadlineAt,
+                    timeoutSeconds: arenaMatch.timeoutSeconds,
+                  });
+                  return;
+                }
                 void initGame(undefined, 'restart', { mode: 'single' });
               }}
               className={cn('p-3 rounded-xl transition-all active:scale-95', resolvedTheme === 'dark' ? 'bg-white text-black hover:bg-gray-200' : 'bg-black text-white hover:bg-gray-800')}
