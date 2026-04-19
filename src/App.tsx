@@ -3217,6 +3217,8 @@ export default function App() {
   const lastLowTimeSoundRef = useRef<number | null>(null);
   const lastRoundEndSoundKeyRef = useRef<string | null>(null);
   const stashOrderRef = useRef<string[]>([]);
+  const stashScrollRef = useRef<HTMLDivElement>(null);
+  const initGameRunIdRef = useRef(0);
   const pointerTrackRef = useRef<PointerTrack | null>(null);
   const touchTrackRef = pointerTrackRef;
 
@@ -3277,6 +3279,14 @@ export default function App() {
     }
     stashOrderRef.current = nextOrder;
   }, [availablePieces, placedPieces, totalPiecesCount, level]);
+
+  useEffect(() => {
+    if (placedPieces.length !== 0) return;
+    if (availablePieces.length !== totalPiecesCount) return;
+    const stashEl = stashScrollRef.current;
+    if (!stashEl) return;
+    stashEl.scrollTop = 0;
+  }, [availablePieces.length, placedPieces.length, totalPiecesCount, level, gameMode]);
 
   // Count only pieces fully inside the grid with no overlap and not on blocked cells
   const seatedPiecesCount = (() => {
@@ -4171,6 +4181,10 @@ export default function App() {
       timeoutSeconds?: number | null;
     },
   ) => {
+    const runId = initGameRunIdRef.current + 1;
+    initGameRunIdRef.current = runId;
+    const isStaleRun = () => initGameRunIdRef.current !== runId;
+
     const mode: GameMode = options?.mode ?? 'single';
     const levelToSet = typeof targetLevel === 'number' ? targetLevel : level;
     if (typeof targetLevel === 'number') {
@@ -4248,6 +4262,7 @@ export default function App() {
     });
 
     await new Promise(resolve => setTimeout(resolve, 50));
+    if (isStaleRun()) return;
 
     let selectedPuzzle: PuzzleSelectionResult | null = null;
     let generationAttempt = 0;
@@ -4274,7 +4289,7 @@ export default function App() {
 
     try {
       generationAttempt += 1;
-      if (mode === 'multiplayer' && options?.puzzleSeed) {
+      if ((mode === 'multiplayer' || mode === 'arena') && options?.puzzleSeed) {
         // Multiplayer rooms/challenges: shared seed keeps all players on the same puzzle.
         selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg);
       } else {
@@ -4283,16 +4298,18 @@ export default function App() {
         const history = mode === 'arena' ? [] : recentPuzzleFingerprints;
         selectedPuzzle = selectSinglePlayerPuzzle(cfg, history);
       }
+      if (isStaleRun()) return;
       if (!isGeneratedPuzzleStructurallyValid(cfg, selectedPuzzle.entry.pieces)) {
         throw new Error('generated puzzle payload invalid');
       }
     } catch (error) {
+      if (isStaleRun()) return;
       logGenerationFailure(`primary-${generationAttempt}`, levelToSet, error);
 
       // Retry with relaxed constraints
       try {
         generationAttempt += 1;
-        if (mode === 'multiplayer' && options?.puzzleSeed) {
+        if ((mode === 'multiplayer' || mode === 'arena') && options?.puzzleSeed) {
           selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg, {
             attemptsPerBatch: 320,
             batchCount: 18,
@@ -4306,10 +4323,12 @@ export default function App() {
             allowRecentFallback: true,
           });
         }
+        if (isStaleRun()) return;
         if (!isGeneratedPuzzleStructurallyValid(cfg, selectedPuzzle.entry.pieces)) {
           throw new Error('generated puzzle payload invalid');
         }
       } catch (finalError) {
+        if (isStaleRun()) return;
         // This means the level config itself has no solvable combination at all.
         // Should never happen with validated configs.
         logGenerationFailure(`final-${generationAttempt}`, levelToSet, finalError);
@@ -4320,6 +4339,7 @@ export default function App() {
         return;
       }
     }
+    if (isStaleRun()) return;
 
     setAvailablePieces(
       selectedPuzzle.entry.pieces.map((piece) => ({
@@ -5849,6 +5869,7 @@ export default function App() {
                 )}
               </div>
               <div
+                ref={stashScrollRef}
                 className="flex flex-wrap items-end justify-center gap-x-4 gap-y-3 px-2 overflow-y-auto overscroll-contain"
                 style={{ maxHeight: availableStashPx }}
               >
