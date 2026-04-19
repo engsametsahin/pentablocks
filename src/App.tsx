@@ -1642,6 +1642,7 @@ function ArenaScreen({
   const rating = profile?.rating ?? user?.arenaRating ?? 1000;
   const tier = getArenaTier(rating);
   const isGuest = !user || user.provider === 'guest';
+  const currentUserId = typeof user?.id === 'number' ? user.id : null;
 
   const formatWaitTime = (secs: number) => {
     if (secs < 60) return `${secs}s`;
@@ -1649,6 +1650,14 @@ function ArenaScreen({
   };
 
   const isDark = resolvedTheme === 'dark';
+  const pregameOpponentName = (() => {
+    if (!match) return '...';
+    if (currentUserId !== null) {
+      if (match.player1.id === currentUserId) return match.player2.displayName ?? 'Opponent';
+      if (match.player2.id === currentUserId) return match.player1.displayName ?? 'Opponent';
+    }
+    return match.player2.displayName ?? match.player1.displayName ?? 'Opponent';
+  })();
 
   return (
     <div className={cn('min-h-screen p-6 md:p-10', isDark ? 'bg-[#0b0f17] text-white' : 'bg-[#f5f5f5] text-[#1a1a1a]')}>
@@ -1738,7 +1747,7 @@ function ArenaScreen({
 
               {phase === 'pregame' && match && (
                 <div className="w-full text-center">
-                  <p className={cn('mb-2', isDark ? 'text-gray-300' : 'text-gray-500')}>vs {match.player1.id === user?.id ? match.player2.displayName : match.player1.displayName}</p>
+                  <p className={cn('mb-2', isDark ? 'text-gray-300' : 'text-gray-500')}>vs {pregameOpponentName}</p>
                   <div className="text-7xl font-black mb-4">{countdown}</div>
                   <p className={cn('text-sm', isDark ? 'text-gray-400' : 'text-gray-500')}>Match starting...</p>
                 </div>
@@ -3224,7 +3233,7 @@ export default function App() {
   const pointerTrackRef = useRef<PointerTrack | null>(null);
   const touchTrackRef = pointerTrackRef;
 
-  const config = LEVEL_CONFIGS[level - 1];
+  const config = LEVEL_CONFIGS[level - 1] ?? LEVEL_CONFIGS[0];
   const boardDimensions = getBoardDimensions(config);
   const gridWidth = boardDimensions.width;
   const gridHeight = boardDimensions.height;
@@ -4357,6 +4366,13 @@ export default function App() {
 
   const startArenaGame = useCallback(
     async (match: ArenaMatch) => {
+      if (match.player1.id === match.player2.id) {
+        setArenaMatch(null);
+        setArenaPhase('idle');
+        setScreen('arena');
+        showToast('Invalid arena match detected. Please queue again.', 'warning');
+        return;
+      }
       // Prevent pregame effect from re-triggering start on every arenaMatch poll update.
       setArenaPhase('playing');
       setScreen("game");
@@ -4370,7 +4386,7 @@ export default function App() {
         timeoutSeconds: match.timeoutSeconds,
       });
     },
-    [initGame],
+    [initGame, showToast],
   );
 
   // Queue polling
@@ -6074,15 +6090,23 @@ export default function App() {
             >
               {gameMode === 'arena' ? (
                 (() => {
-                  const myResult = arenaMatch?.results.find((r) => r.userId === authUser?.id) ?? null;
-                  const opponent = arenaMatch
-                    ? (arenaMatch.player1.id === authUser?.id ? arenaMatch.player2 : arenaMatch.player1)
-                    : null;
+                  const currentUserId = typeof authUser?.id === 'number' ? authUser.id : null;
+                  const myResult = currentUserId === null
+                    ? null
+                    : (arenaMatch?.results.find((r) => r.userId === currentUserId) ?? null);
+                  const opponent = (() => {
+                    if (!arenaMatch) return null;
+                    if (currentUserId !== null) {
+                      if (arenaMatch.player1.id === currentUserId) return arenaMatch.player2;
+                      if (arenaMatch.player2.id === currentUserId) return arenaMatch.player1;
+                    }
+                    return arenaMatch.player2 ?? arenaMatch.player1;
+                  })();
                   const opponentResult = arenaMatch?.results.find((r) => r.userId === opponent?.id) ?? null;
                   const matchFinished = arenaMatch?.status === 'finished' || arenaMatch?.status === 'aborted';
                   const isSubmitting = arenaPhase === 'submitting';
                   const isWaitingOpponent = !isSubmitting && arenaResultSubmitted && !matchFinished;
-                  const didWin = matchFinished && arenaMatch?.winnerId === authUser?.id;
+                  const didWin = currentUserId !== null && matchFinished && arenaMatch?.winnerId === currentUserId;
                   const ratingChange = myResult?.ratingChange ?? null;
                   const ratingAfter = myResult?.ratingAfter ?? null;
                   return (
