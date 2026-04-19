@@ -3224,7 +3224,11 @@ export default function App() {
   const boardDimensions = getBoardDimensions(config);
   const gridWidth = boardDimensions.width;
   const gridHeight = boardDimensions.height;
-  const cellSize = getResponsiveCellSize(viewportWidth);
+  const baseCellSize = getResponsiveCellSize(viewportWidth);
+  // Prevent grid overflow on narrow viewports or very wide grids (e.g. 15×2 arena levels).
+  const gridPaddingRaw = baseCellSize < CELL_SIZE ? 20 : GRID_PADDING;
+  const maxCellByGrid = Math.max(22, Math.floor((viewportWidth * 0.9 - 2 * gridPaddingRaw) / gridWidth));
+  const cellSize = Math.min(baseCellSize, maxCellByGrid);
   const gridPadding = cellSize < CELL_SIZE ? 20 : GRID_PADDING;
   // Stash defaults to board cell size; only shrinks when remaining vertical space genuinely demands it.
   const isMobileView = viewportWidth <= 640;
@@ -4203,7 +4207,7 @@ export default function App() {
     const inferredStartMs = hasDeadlineAt ? (deadlineAtMsRaw - timeoutSeconds * 1000) : Date.now();
     const effectiveStartMs = hasStartAt ? startAtMsRaw : inferredStartMs;
     const elapsedFromStart = Math.max(0, Math.floor((Date.now() - effectiveStartMs) / 1000));
-    const initialTimeLeft = mode === 'multiplayer'
+    const initialTimeLeft = (mode === 'multiplayer' || mode === 'arena')
       ? (hasDeadlineAt
         ? Math.max(0, Math.floor((deadlineAtMsRaw - Date.now()) / 1000))
         : Math.max(0, timeoutSeconds - elapsedFromStart))
@@ -4330,10 +4334,13 @@ export default function App() {
       // Prevent pregame effect from re-triggering start on every arenaMatch poll update.
       setArenaPhase('playing');
       setScreen("game");
+      const startAtMs = match.startAt ? Date.parse(match.startAt) : Date.now();
+      const deadlineAt = new Date(startAtMs + match.timeoutSeconds * 1000).toISOString();
       await initGame(match.levelId, "start", {
         mode: "arena",
         puzzleSeed: match.puzzleSeed,
         startAt: match.startAt ?? undefined,
+        deadlineAt,
         timeoutSeconds: match.timeoutSeconds,
       });
     },
@@ -4391,7 +4398,7 @@ export default function App() {
   }, [arenaPhase, arenaMatch, startArenaGame]);
 
   useEffect(() => {
-    if (!isMultiplayerRound || multiplayerLockedUntil === null) return;
+    if ((!isMultiplayerRound && !isArenaRound) || multiplayerLockedUntil === null) return;
     const msLeft = multiplayerLockedUntil - Date.now();
     if (msLeft <= 0) {
       setMultiplayerLockedUntil(null);
@@ -4407,7 +4414,7 @@ export default function App() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isMultiplayerRound, multiplayerLockedUntil, timeLeft]);
+  }, [isMultiplayerRound, isArenaRound, multiplayerLockedUntil, timeLeft]);
 
   useEffect(() => {
     if (!isMultiplayerLocked) return;
@@ -4530,6 +4537,7 @@ export default function App() {
     };
   }, [
     isMultiplayerRound,
+    isArenaRound,
     multiplayerRoundDeadlineMs,
     multiplayerRoundStartMs,
     isMultiplayerLocked,
@@ -4542,6 +4550,7 @@ export default function App() {
     level,
     gameMode,
     submitChallengeResult,
+    submitArenaResult,
   ]);
 
   // Single-player timer
