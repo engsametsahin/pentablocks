@@ -3236,7 +3236,8 @@ export default function App() {
   const reservedChromePx = isMobileView ? 280 : 220;
   const availableStashPx = Math.max(80, viewportHeight - boardHeightPx - reservedChromePx);
   const totalStashPieces = availablePieces.length;
-  const piecesPerRowEstimate = Math.max(2, Math.floor(viewportWidth / (cellSize * 3)));
+  const stashContainerWidth = isMobileView ? viewportWidth : Math.max(200, viewportWidth - 240);
+  const piecesPerRowEstimate = Math.max(2, Math.floor(stashContainerWidth / (cellSize * 4)));
   const estimatedRows = Math.ceil(totalStashPieces / piecesPerRowEstimate);
   const dynamicRowHeight = estimatedRows > 0 ? availableStashPx / estimatedRows : availableStashPx;
   const heightConstrainedCellSize = Math.floor((dynamicRowHeight - 16) / 3);
