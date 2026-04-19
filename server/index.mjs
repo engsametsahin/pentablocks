@@ -2504,14 +2504,30 @@ app.get('/api/multiplayer/stats', async (req, res) => {
 
 // ── Arena helpers ──────────────────────────────────────────────────────────────
 
-/** Rating-based level selection for arena matches. */
+/** Randomly pick one element from an array. */
+function pickFrom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/**
+ * Rating-based level selection for arena matches.
+ * Each tier draws from a curated pool of balanced-grid levels
+ * (roughly square or ≤2:1 aspect — no extreme narrow strips).
+ * Grid shapes (after client getBoardDimensions wider-side flip):
+ *   Bronze  5,8,11,14,15 → 4×3 / 4×3 / 4×3 / 5×3 / 5×3   (~12-15 cells)
+ *   Silver  18-20,24,25  → 4×4 / 4×4 / 4×4 / 6×3 / 6×3   (~16-18 cells)
+ *   Gold    31-35        → 5×4 family                       (~20-21 cells)
+ *   Plat.   51,54,62,63  → 6×4 / 5×5 / 7×4 / 7×4          (~24-28 cells)
+ *   Diamond 65,66,68     → 6×5 family                       (~30 cells)
+ *   Master  71,78,79     → 8×4 family                       (~32 cells)
+ */
 function arenaLevelForRating(avgRating) {
-  if (avgRating < 1100) return 10;   // Spark/Flame tier
-  if (avgRating < 1300) return 25;   // Ember tier
-  if (avgRating < 1500) return 40;   // Blaze tier
-  if (avgRating < 1700) return 55;   // Thunder tier
-  if (avgRating < 1900) return 68;   // Cyclone tier
-  return 82;                          // Legend+ tier
+  if (avgRating < 1100) return pickFrom([5, 8, 11, 14, 15]);
+  if (avgRating < 1300) return pickFrom([18, 19, 20, 24, 25]);
+  if (avgRating < 1500) return pickFrom([31, 32, 33, 34, 35]);
+  if (avgRating < 1700) return pickFrom([51, 54, 62, 63]);
+  if (avgRating < 1900) return pickFrom([65, 66, 68]);
+  return pickFrom([71, 78, 79]);
 }
 
 function clampNumber(value, min, max) {

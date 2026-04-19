@@ -4273,12 +4273,14 @@ export default function App() {
 
     try {
       generationAttempt += 1;
-      if ((mode === 'multiplayer' || mode === 'arena') && options?.puzzleSeed) {
+      if (mode === 'multiplayer' && options?.puzzleSeed) {
+        // Multiplayer rooms/challenges: shared seed keeps all players on the same puzzle.
         selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg);
       } else {
-        // selectSinglePlayerPuzzle includes pool → live → exhaustive fallback,
-        // so it should always return a valid puzzle for any valid level config.
-        selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints);
+        // Arena and single-player both use the same pool-based mechanism.
+        // Arena passes [] history so any good pool entry is eligible (no cross-session bias).
+        const history = mode === 'arena' ? [] : recentPuzzleFingerprints;
+        selectedPuzzle = selectSinglePlayerPuzzle(cfg, history);
       }
       if (!isGeneratedPuzzleStructurallyValid(cfg, selectedPuzzle.entry.pieces)) {
         throw new Error('generated puzzle payload invalid');
@@ -4289,13 +4291,14 @@ export default function App() {
       // Retry with relaxed constraints
       try {
         generationAttempt += 1;
-        if ((mode === 'multiplayer' || mode === 'arena') && options?.puzzleSeed) {
+        if (mode === 'multiplayer' && options?.puzzleSeed) {
           selectedPuzzle = generateChallengePieces(options.puzzleSeed, cfg, {
             attemptsPerBatch: 320,
             batchCount: 18,
           });
         } else {
-          selectedPuzzle = selectSinglePlayerPuzzle(cfg, recentPuzzleFingerprints, {
+          const history = mode === 'arena' ? [] : recentPuzzleFingerprints;
+          selectedPuzzle = selectSinglePlayerPuzzle(cfg, history, {
             attemptsPerBatch: 620,
             batchCount: 6,
             noveltyPenalty: 0,
