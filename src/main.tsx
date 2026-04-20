@@ -1,4 +1,4 @@
-import { Component, StrictMode, type ErrorInfo, type ReactNode } from 'react';
+import React, { type ErrorInfo, type ReactNode } from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
@@ -18,19 +18,20 @@ window.addEventListener('vite:preloadError', (event) => {
   window.location.reload();
 });
 
-class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+class AppErrorBoundary extends React.Component<{ children: ReactNode }, { error: Error | null; componentStack: string }> {
   constructor(props: { children: ReactNode }) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: null, componentStack: '' };
   }
 
   static getDerivedStateFromError(error: Error) {
-    return { error };
+    return { error, componentStack: '' };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     // Keep this visible in production console so we can debug blank-screen reports quickly.
     console.error('fatal_react_render_error', error, info.componentStack);
+    this.setState({ componentStack: info.componentStack || '' });
   }
 
   render() {
@@ -74,6 +75,24 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error
           >
             {this.state.error.message}
           </pre>
+          {(this.state.error.stack || this.state.componentStack) && (
+            <details style={{ marginBottom: '14px' }}>
+              <summary style={{ cursor: 'pointer', color: '#9ca3af', marginBottom: '8px' }}>Technical details</summary>
+              <pre style={{
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                background: 'rgba(0,0,0,0.25)',
+                borderRadius: '12px',
+                padding: '12px',
+                fontSize: '11px',
+                margin: 0,
+                color: '#cbd5e1',
+              }}
+              >
+                {[this.state.error.stack, this.state.componentStack].filter(Boolean).join('\n\n')}
+              </pre>
+            </details>
+          )}
           <button
             onClick={() => window.location.reload()}
             style={{
@@ -95,9 +114,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error
 }
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
-  </StrictMode>,
+  <AppErrorBoundary>
+    <App />
+  </AppErrorBoundary>,
 );

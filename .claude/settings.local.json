@@ -8,7 +8,15 @@
       "Bash(npx tsx *)",
       "Bash(type \"g:\\\\\\\\Proje\\\\\\\\Katamino\\\\\\\\src\\\\\\\\constants.ts\")",
       "Bash(findstr \"PENTOMINO\")",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "WebFetch(domain:github.com)",
+      "Bash(awk 'NR>=3137 && /^  return\\\\s*\\\\\\(/{print NR\": \"$0}' src/App.tsx)",
+      "Bash(awk 'NR>=3137 && NR<=5628 && /^\\\\s*\\(use[A-Z]|const .* = use\\)/{print NR\": \"$0}' src/App.tsx)",
+      "Bash(awk 'NR>=3137 && NR<=5628' src/App.tsx)",
+      "Bash(node -e ' *)",
+      "Bash(grep -v \"//\")",
+      "Bash(awk 'NR>=1763 && NR<=2347' src/App.tsx)",
+      "Bash(awk -F: '$2>=5415 && $2<=5628')"
     ],
     "defaultMode": "bypassPermissions"
   }
