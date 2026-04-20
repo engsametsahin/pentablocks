@@ -397,6 +397,22 @@ BEGIN
   END IF;
 END $$;
 
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'arena_matches'
+      AND nsp.nspname = current_schema()
+      AND con.conname = 'arena_matches_distinct_players_check'
+  ) THEN
+    ALTER TABLE arena_matches
+      ADD CONSTRAINT arena_matches_distinct_players_check
+      CHECK (player1_id <> player2_id);
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS arena_matches_player1_idx ON arena_matches (player1_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS arena_matches_player2_idx ON arena_matches (player2_id, created_at DESC);
 

@@ -2727,7 +2727,7 @@ async function fetchArenaMatch(code) {
 }
 
 /** Tries to pair the given user with a waiting opponent. Returns match code or null. */
-async function runArenaMatchmaking(userId, userRating) {
+async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -2766,11 +2766,13 @@ async function runArenaMatchmaking(userId, userRating) {
       `SELECT q.user_id, q.rating, q.joined_at,
               EXTRACT(EPOCH FROM (NOW() - q.joined_at))::int AS wait_seconds
        FROM arena_queue q
+       JOIN users u ON u.id = q.user_id
        WHERE q.user_id != $1
+         AND ($3::text = '' OR LOWER(COALESCE(u.display_name, '')) <> LOWER($3::text))
        ORDER BY ABS(q.rating - $2) ASC, q.joined_at ASC
        LIMIT 1
        FOR UPDATE SKIP LOCKED`,
-      [userId, userRating],
+      [userId, userRating, String(userDisplayName ?? '').trim()],
     );
 
     if (opponentQ.rows.length === 0) {
@@ -2839,15 +2841,29 @@ async function runArenaMatchmaking(userId, userRating) {
     }
 
     // Pair found — remove both from queue
+    const opponentUserId = Number(opp.user_id);
+    if (!Number.isFinite(opponentUserId) || opponentUserId === Number(userId)) {
+      await client.query(
+        `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
+         VALUES ($1, $2, NOW(), NOW() + make_interval(secs => $3))
+         ON CONFLICT (user_id) DO UPDATE
+           SET rating = $2, joined_at = NOW(),
+               expires_at = NOW() + make_interval(secs => $3)`,
+        [userId, userRating, ARENA_QUEUE_TTL_SECONDS],
+      );
+      await client.query('COMMIT');
+      return null;
+    }
+
     await client.query(
       `DELETE FROM arena_queue WHERE user_id IN ($1, $2)`,
-      [userId, opp.user_id],
+      [userId, opponentUserId],
     );
 
     const matchCode = await createArenaMatchRecord(client, {
       playerAId: userId,
       playerARating: userRating,
-      playerBId: Number(opp.user_id),
+      playerBId: opponentUserId,
       playerBRating: Number(opp.rating),
     });
 
@@ -3068,7 +3084,11 @@ app.post('/api/arena/queue/join', async (req, res) => {
   }
 
   try {
-    const matchCode = await runArenaMatchmaking(Number(user.id), user.arena_rating ?? 1000);
+    const matchCode = await runArenaMatchmaking(
+      Number(user.id),
+      user.arena_rating ?? 1000,
+      user.display_name ?? '',
+    );
     if (matchCode) {
       // Activate match
       await pool.query(

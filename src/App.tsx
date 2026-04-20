@@ -1652,11 +1652,12 @@ function ArenaScreen({
   const isDark = resolvedTheme === 'dark';
   const pregameOpponentName = (() => {
     if (!match) return '...';
+    if (match.player1.id === match.player2.id) return 'Invalid match';
     if (currentUserId !== null) {
       if (match.player1.id === currentUserId) return match.player2.displayName ?? 'Opponent';
       if (match.player2.id === currentUserId) return match.player1.displayName ?? 'Opponent';
     }
-    return match.player2.displayName ?? match.player1.displayName ?? 'Opponent';
+    return 'Opponent';
   })();
 
   return (
@@ -6096,11 +6097,12 @@ export default function App() {
                     : (arenaMatch?.results.find((r) => r.userId === currentUserId) ?? null);
                   const opponent = (() => {
                     if (!arenaMatch) return null;
+                    if (arenaMatch.player1.id === arenaMatch.player2.id) return null;
                     if (currentUserId !== null) {
                       if (arenaMatch.player1.id === currentUserId) return arenaMatch.player2;
                       if (arenaMatch.player2.id === currentUserId) return arenaMatch.player1;
                     }
-                    return arenaMatch.player2 ?? arenaMatch.player1;
+                    return null;
                   })();
                   const opponentResult = arenaMatch?.results.find((r) => r.userId === opponent?.id) ?? null;
                   const matchFinished = arenaMatch?.status === 'finished' || arenaMatch?.status === 'aborted';
