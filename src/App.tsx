@@ -5613,7 +5613,7 @@ export default function App() {
     ...placedPieces.map((piece) => [piece.id, piece] as const),
     ...availablePieces.map((piece) => [piece.id, piece] as const),
   ]);
-  const stashRenderOrder = useMemo(() => {
+  const stashRenderOrder = (() => {
     const currentIds = Array.from(new Set([
       ...availablePieces.map((piece) => piece.id),
       ...placedPieces.map((piece) => piece.id),
@@ -5628,7 +5628,7 @@ export default function App() {
       if (!nextOrder.includes(id)) nextOrder.push(id);
     }
     return nextOrder;
-  }, [availablePieces, placedPieces, stashSlotOrder]);
+  })();
 
   return (
     <div
