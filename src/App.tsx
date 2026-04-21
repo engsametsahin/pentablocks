@@ -373,6 +373,13 @@ function orientShapeForStash(shape: Point[]) {
   return best;
 }
 
+function orientPiecesForStash(pieces: Piece[]) {
+  return pieces.map((piece) => ({
+    ...piece,
+    shape: orientShapeForStash(piece.shape),
+  }));
+}
+
 const solvablePieceSetCache = new Map<string, Piece[]>();
 const precomputedLevelPoolCache = new Map<number, SolvablePoolEntry[]>();
 const PIECE_DIFFICULTY_WEIGHT: Record<string, number> = {
@@ -3300,6 +3307,49 @@ export default function App() {
     stashEl.scrollTop = 0;
   }, [availablePieces.length, placedPieces.length, totalPiecesCount, level, gameMode]);
 
+  useEffect(() => {
+    if (isGenerating || isShowingSolution || isGameOver || isWin) return;
+    if (placedPieces.length > 0) return;
+
+    const expectedPieces = expectedPuzzlePiecesRef.current;
+    if (!expectedPieces || expectedPieces.length === 0) return;
+
+    const sameLength = availablePieces.length === expectedPieces.length;
+    const currentIds = [...availablePieces.map((piece) => piece.id)].sort().join('|');
+    const expectedIds = [...expectedPieces.map((piece) => piece.id)].sort().join('|');
+    const isInSync = sameLength && currentIds === expectedIds;
+    if (isInSync) {
+      hasAutoReconciledPuzzleRef.current = false;
+      return;
+    }
+
+    if (hasAutoReconciledPuzzleRef.current) return;
+    hasAutoReconciledPuzzleRef.current = true;
+
+    setAvailablePieces(clonePieceSet(expectedPieces));
+    stashOrderRef.current = expectedPieces.map((piece) => piece.id);
+    setSelectedPieceId(null);
+    setDraggedPiece(null);
+    dragStartRef.current = null;
+    isDraggingRef.current = false;
+    pointerTrackRef.current = null;
+    console.warn('[puzzle-resync] piece set mismatch corrected', {
+      level,
+      mode: gameMode,
+      expected: expectedPieces.map((piece) => piece.id),
+      current: availablePieces.map((piece) => piece.id),
+    });
+  }, [
+    availablePieces,
+    placedPieces.length,
+    isGenerating,
+    isShowingSolution,
+    isGameOver,
+    isWin,
+    level,
+    gameMode,
+  ]);
+
   // Count only pieces fully inside the grid with no overlap and not on blocked cells
   const seatedPiecesCount = (() => {
     const occupied = new Set<string>(blockedCellSet); // blocked cells are pre-occupied
@@ -4225,7 +4275,19 @@ export default function App() {
     setIsWin(false);
     setIsShowingSolution(false);
     setPlacedPieces([]);
+    setAvailablePieces([]);
+    setDraggedPiece(null);
     setSelectedPieceId(null);
+    stashOrderRef.current = [];
+    expectedPuzzlePiecesRef.current = null;
+    hasAutoReconciledPuzzleRef.current = false;
+    dragStartRef.current = null;
+    isDraggingRef.current = false;
+    const activeTrack = pointerTrackRef.current;
+    if (activeTrack?.longPressTimer) {
+      window.clearTimeout(activeTrack.longPressTimer);
+    }
+    pointerTrackRef.current = null;
     const startAtMsRaw = options?.startAt ? Date.parse(options.startAt) : NaN;
     const deadlineAtMsRaw = options?.deadlineAt ? Date.parse(options.deadlineAt) : NaN;
     const hasStartAt = Number.isFinite(startAtMsRaw);
@@ -4353,12 +4415,10 @@ export default function App() {
     }
     if (isStaleRun()) return;
 
-    setAvailablePieces(
-      selectedPuzzle.entry.pieces.map((piece) => ({
-        ...piece,
-        shape: orientShapeForStash(piece.shape),
-      })),
-    );
+    const nextAvailablePieces = orientPiecesForStash(selectedPuzzle.entry.pieces);
+    expectedPuzzlePiecesRef.current = clonePieceSet(nextAvailablePieces);
+    hasAutoReconciledPuzzleRef.current = false;
+    setAvailablePieces(nextAvailablePieces);
     if (mode === 'single') {
       setRecentPuzzleFingerprints((prev) => appendRecentPuzzleFingerprint(prev, selectedPuzzle.entry.fingerprint));
     }
