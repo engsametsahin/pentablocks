@@ -3536,17 +3536,22 @@ export default function App() {
       showToast('Sign in to play Arena mode.', 'warning');
       return;
     }
+    console.log(`[ARENA][client][join] userId=${authUser.id} rating=${authUser.arenaRating} provider=${authUser.provider}`);
     try {
       setArenaPhase('queuing');
       setArenaQueueSeconds(0);
       const status = await joinArenaQueue();
+      console.log(`[ARENA][client][join] response:`, status);
       if (status.status === 'matched' && status.matchCode) {
+        console.log(`[ARENA][client][join] fetching match code=${status.matchCode}`);
         const match = await fetchArenaMatch(status.matchCode);
+        console.log(`[ARENA][client][join] match fetched:`, { id: match?.code, status: match?.status, level: match?.levelId, p1: match?.player1?.displayName, p2: match?.player2?.displayName, startAt: match?.startAt });
         setArenaMatch(match);
         setArenaPhase('pregame');
         setArenaCountdown(3);
       }
     } catch (err) {
+      console.error(`[ARENA][client][join] error:`, err);
       setArenaPhase('idle');
       showToast('Failed to join queue.', 'warning');
     }
@@ -4425,6 +4430,26 @@ export default function App() {
     const nextAvailablePieces = orientPiecesForStash(selectedPuzzle.entry.pieces);
     expectedPuzzlePiecesRef.current = clonePieceSet(nextAvailablePieces);
     hasAutoReconciledPuzzleRef.current = false;
+    if (mode === 'arena') {
+      const cfg2 = LEVEL_CONFIGS[levelToSet - 1];
+      const bw = getBoardDimensions(cfg2).width;
+      const bh = getBoardDimensions(cfg2).height;
+      const vw = viewportWidth;
+      const vh = viewportHeight;
+      const isMob = vw <= 640;
+      const isDesk = vw >= 1024;
+      const cs = Math.min(isMob ? (vw<=390?34:vw<=480?36:40) : 45, Math.max(22, Math.floor((vw * 0.9 - 2*(isMob?20:32)) / bw)));
+      const boardH = bh * cs + (cs < 45 ? 20 : 32) * 2;
+      const availSt = Math.max(80, vh - boardH - (isMob ? 280 : 220));
+      const gcw = Math.min(vw - (isMob ? 32 : 64), 1024);
+      const scw = isDesk ? Math.max(200, gcw - 224) : Math.max(200, gcw);
+      const ppr = Math.max(2, Math.floor(scw / (cs * 4)));
+      const eRows = Math.ceil(nextAvailablePieces.length / ppr);
+      const drh = eRows > 0 ? availSt / eRows : availSt;
+      const hcs = Math.floor((drh - 16) / 3);
+      const scs = Math.max(isMob ? 18 : 22, hcs > 0 ? Math.min(cs, hcs) : cs);
+      console.log(`[ARENA][client][initGame] level=${levelToSet} grid=${bw}x${bh} vp=${vw}x${vh} cellSize=${cs} boardH=${boardH} availableStashPx=${availSt} stashContainerWidth=${scw} piecesPerRow=${ppr} estimatedRows=${eRows} stashCellSize=${scs} numPieces=${nextAvailablePieces.length} pieces=${nextAvailablePieces.map(p=>p.id).join(',')}`);
+    }
     setAvailablePieces(nextAvailablePieces);
     if (mode === 'single') {
       setRecentPuzzleFingerprints((prev) => appendRecentPuzzleFingerprint(prev, selectedPuzzle.entry.fingerprint));
@@ -4434,7 +4459,9 @@ export default function App() {
 
   const startArenaGame = useCallback(
     async (match: ArenaMatch) => {
+      console.log(`[ARENA][client][startGame] code=${match.code} level=${match.levelId} p1=${match.player1.displayName}(${match.player1.id}) p2=${match.player2.displayName}(${match.player2.id}) startAt=${match.startAt} timeout=${match.timeoutSeconds}s seed=${match.puzzleSeed}`);
       if (match.player1.id === match.player2.id) {
+        console.error(`[ARENA][client][startGame] SELF-MATCH detected! p1===p2=${match.player1.id}`);
         setArenaMatch(null);
         setArenaPhase('idle');
         setScreen('arena');
@@ -4446,6 +4473,7 @@ export default function App() {
       setScreen("game");
       const startAtMs = match.startAt ? Date.parse(match.startAt) : Date.now();
       const deadlineAt = new Date(startAtMs + match.timeoutSeconds * 1000).toISOString();
+      console.log(`[ARENA][client][startGame] calling initGame level=${match.levelId} seed=${match.puzzleSeed} deadlineAt=${deadlineAt}`);
       await initGame(match.levelId, "start", {
         mode: "arena",
         puzzleSeed: match.puzzleSeed,
@@ -4460,28 +4488,34 @@ export default function App() {
   // Queue polling
   useEffect(() => {
     if (arenaPhase !== "queuing") return;
+    console.log(`[ARENA][client][poll] starting polling interval`);
     let cancelled = false;
     const interval = window.setInterval(async () => {
       if (cancelled) return;
       try {
         const status = await pollArenaQueueStatus();
         if (cancelled) return;
+        console.log(`[ARENA][client][poll] status:`, status);
         if (status.status === "waiting") {
           setArenaQueueSeconds(status.waitSeconds);
         } else if (status.status === "matched" && status.matchCode) {
+          console.log(`[ARENA][client][poll] matched! fetching match code=${status.matchCode}`);
           const match = await fetchArenaMatch(status.matchCode);
           if (cancelled) return;
+          console.log(`[ARENA][client][poll] match fetched:`, { code: match?.code, level: match?.levelId, p1: match?.player1?.displayName, p2: match?.player2?.displayName, startAt: match?.startAt });
           setArenaMatch(match);
           setArenaPhase("pregame");
           setArenaCountdown(3);
         }
-      } catch {
+      } catch (err) {
+        console.error(`[ARENA][client][poll] error:`, err);
         setArenaQueueSeconds((s) => s + 2); // fallback on network error
       }
     }, 2000);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      console.log(`[ARENA][client][poll] polling stopped`);
     };
   }, [arenaPhase]);
 
@@ -4492,7 +4526,9 @@ export default function App() {
       ? Date.parse(arenaMatch.startAt)
       : Date.now() + 3000;
     const msLeft = startAtMs - Date.now();
+    console.log(`[ARENA][client][pregame] countdown msLeft=${msLeft} startAt=${arenaMatch.startAt} code=${arenaMatch.code}`);
     if (msLeft <= 0) {
+      console.log(`[ARENA][client][pregame] msLeft<=0, launching immediately`);
       void startArenaGame(arenaMatch);
       return;
     }
@@ -4501,6 +4537,7 @@ export default function App() {
       setArenaCountdown(remaining);
       if (remaining <= 0) {
         window.clearInterval(iv);
+        console.log(`[ARENA][client][pregame] countdown done, launching game`);
         void startArenaGame(arenaMatch);
       }
     }, 250);

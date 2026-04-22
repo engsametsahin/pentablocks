@@ -2613,6 +2613,7 @@ async function createArenaMatchRecord(client, {
   const avgRating = Math.round((playerARating + playerBRating) / 2);
   const levelId = arenaLevelForRating(avgRating);
   const puzzleSeed = buildPuzzleSeed();
+  console.log(`[ARENA][createMatch] playerA=${playerAId}(r=${playerARating}) vs playerB=${playerBId}(r=${playerBRating}) avgRating=${avgRating} → levelId=${levelId} seed=${puzzleSeed}`);
   const [p1Id, p2Id, p1Rating, p2Rating] = Math.random() < 0.5
     ? [playerAId, playerBId, playerARating, playerBRating]
     : [playerBId, playerAId, playerBRating, playerARating];
@@ -2728,6 +2729,8 @@ async function fetchArenaMatch(code) {
 
 /** Tries to pair the given user with a waiting opponent. Returns match code or null. */
 async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
+  const tag = `[ARENA][matchmaking][u${userId}]`;
+  console.log(`${tag} START — rating=${userRating} name="${userDisplayName}" botsEnabled=${ARENA_BOTS_ENABLED}`);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -2754,6 +2757,7 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
       [userId],
     );
     if (activeMatchQ.rows.length > 0) {
+      console.log(`${tag} already in active match → code=${activeMatchQ.rows[0].code}`);
       await client.query('COMMIT');
       return activeMatchQ.rows[0].code;
     }
@@ -2776,20 +2780,25 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
     );
 
     if (opponentQ.rows.length === 0) {
+      console.log(`${tag} no opponent in queue`);
       if (ARENA_BOTS_ENABLED) {
         await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
         const botProfile = pickArenaBotProfile(userRating);
+        console.log(`${tag} creating bot match — botProfile=${JSON.stringify(botProfile)}`);
         const bot = await ensureArenaBotUser(client, botProfile);
+        console.log(`${tag} bot user ready — botId=${bot.id} botRating=${bot.rating}`);
         const matchCode = await createArenaMatchRecord(client, {
           playerAId: userId,
           playerARating: userRating,
           playerBId: bot.id,
           playerBRating: bot.rating,
         });
+        console.log(`${tag} bot match created — code=${matchCode}`);
         await client.query('COMMIT');
         return matchCode;
       }
       // No one waiting — join queue
+      console.log(`${tag} bots disabled, joining queue (TTL=${ARENA_QUEUE_TTL_SECONDS}s)`);
       await client.query(
         `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
          VALUES ($1, $2, NOW(), NOW() + make_interval(secs => $3))
@@ -2813,21 +2822,28 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
         ? ARENA_MAX_RATING_DIFF_RELAXED
         : ARENA_MAX_RATING_DIFF_INITIAL;
 
+    console.log(`${tag} found opponent u${opp.user_id} rating=${opp.rating} waitSecs=${waitSecs} ratingDiff=${ratingDiff} maxDiff=${maxDiff}`);
+
     if (ratingDiff > maxDiff) {
+      console.log(`${tag} rating diff too large (${ratingDiff} > ${maxDiff})`);
       if (ARENA_BOTS_ENABLED) {
         await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
         const botProfile = pickArenaBotProfile(userRating);
+        console.log(`${tag} creating bot match (diff too large) — botProfile=${JSON.stringify(botProfile)}`);
         const bot = await ensureArenaBotUser(client, botProfile);
+        console.log(`${tag} bot user ready — botId=${bot.id} botRating=${bot.rating}`);
         const matchCode = await createArenaMatchRecord(client, {
           playerAId: userId,
           playerARating: userRating,
           playerBId: bot.id,
           playerBRating: bot.rating,
         });
+        console.log(`${tag} bot match created — code=${matchCode}`);
         await client.query('COMMIT');
         return matchCode;
       }
       // Not close enough yet — join queue and wait
+      console.log(`${tag} bots disabled, joining queue to wait for closer opponent`);
       await client.query(
         `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
          VALUES ($1, $2, NOW(), NOW() + make_interval(secs => $3))
@@ -2843,6 +2859,7 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
     // Pair found — remove both from queue
     const opponentUserId = Number(opp.user_id);
     if (!Number.isFinite(opponentUserId) || opponentUserId === Number(userId)) {
+      console.log(`${tag} invalid opponent id=${opponentUserId}, joining queue`);
       await client.query(
         `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
          VALUES ($1, $2, NOW(), NOW() + make_interval(secs => $3))
@@ -2855,6 +2872,7 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
       return null;
     }
 
+    console.log(`${tag} pairing with u${opponentUserId}`);
     await client.query(
       `DELETE FROM arena_queue WHERE user_id IN ($1, $2)`,
       [userId, opponentUserId],
@@ -2867,9 +2885,11 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
       playerBRating: Number(opp.rating),
     });
 
+    console.log(`${tag} human vs human match created — code=${matchCode}`);
     await client.query('COMMIT');
     return matchCode;
   } catch (err) {
+    console.error(`${tag} ERROR — rolling back`, err);
     await client.query('ROLLBACK');
     throw err;
   } finally {
@@ -3083,6 +3103,7 @@ app.post('/api/arena/queue/join', async (req, res) => {
     return;
   }
 
+  console.log(`[ARENA][join] u${user.id} "${user.display_name}" rating=${user.arena_rating ?? 1000} provider=${user.provider}`);
   try {
     const matchCode = await runArenaMatchmaking(
       Number(user.id),
@@ -3091,12 +3112,14 @@ app.post('/api/arena/queue/join', async (req, res) => {
     );
     if (matchCode) {
       // Activate match
-      await pool.query(
-        `UPDATE arena_matches SET status = 'active' WHERE code = $1 AND status = 'pending'`,
+      const activateResult = await pool.query(
+        `UPDATE arena_matches SET status = 'active' WHERE code = $1 AND status = 'pending' RETURNING status`,
         [matchCode],
       );
+      console.log(`[ARENA][join] matched → code=${matchCode} activated=${activateResult.rowCount > 0}`);
       res.json({ status: 'matched', matchCode });
     } else {
+      console.log(`[ARENA][join] u${user.id} → status=waiting`);
       res.json({ status: 'waiting' });
     }
   } catch (err) {
@@ -3134,6 +3157,7 @@ app.get('/api/arena/queue/status', async (req, res) => {
       [user.id],
     );
     if (matchQ.rows.length > 0) {
+      console.log(`[ARENA][poll] u${user.id} already matched → code=${matchQ.rows[0].code}`);
       res.json({ status: 'matched', matchCode: matchQ.rows[0].code });
       return;
     }
@@ -3145,6 +3169,7 @@ app.get('/api/arena/queue/status', async (req, res) => {
     if (queueQ.rows.length > 0) {
       const row = queueQ.rows[0];
       const waitSeconds = Math.round((Date.now() - new Date(row.joined_at).getTime()) / 1000);
+      console.log(`[ARENA][poll] u${user.id} in queue waitSeconds=${waitSeconds}`);
       // Re-run matchmaking on each poll so bots can be injected if the join call couldn't do it
       if (waitSeconds >= 2) {
         try {
@@ -3154,10 +3179,11 @@ app.get('/api/arena/queue/status', async (req, res) => {
             user.display_name ?? '',
           );
           if (matchCode) {
-            await pool.query(
-              `UPDATE arena_matches SET status = 'active' WHERE code = $1 AND status = 'pending'`,
+            const activateResult = await pool.query(
+              `UPDATE arena_matches SET status = 'active' WHERE code = $1 AND status = 'pending' RETURNING status`,
               [matchCode],
             );
+            console.log(`[ARENA][poll] matchmaking via poll → code=${matchCode} activated=${activateResult.rowCount > 0}`);
             res.json({ status: 'matched', matchCode });
             return;
           }
@@ -3167,6 +3193,7 @@ app.get('/api/arena/queue/status', async (req, res) => {
       }
       res.json({ status: 'waiting', waitSeconds });
     } else {
+      console.log(`[ARENA][poll] u${user.id} not in queue → idle`);
       res.json({ status: 'idle' });
     }
   } catch (err) {
