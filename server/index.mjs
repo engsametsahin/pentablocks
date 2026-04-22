@@ -2747,6 +2747,22 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
       [userId],
     );
 
+    // Expire stale active/pending matches (deadline passed + 60s grace) before guard check
+    const staleAbort = await client.query(
+      `UPDATE arena_matches
+         SET status = 'aborted', finished_at = NOW(), winner_id = NULL
+       WHERE (player1_id = $1 OR player2_id = $1)
+         AND player1_id <> player2_id
+         AND status IN ('pending', 'active')
+         AND start_at IS NOT NULL
+         AND start_at + make_interval(secs => timeout_seconds + 60) < NOW()
+       RETURNING code`,
+      [userId],
+    );
+    if (staleAbort.rowCount > 0) {
+      console.log(`${tag} aborted ${staleAbort.rowCount} stale match(es): ${staleAbort.rows.map(r => r.code).join(', ')}`);
+    }
+
     // Guard: prevent joining queue while already in an active/pending match
     const activeMatchQ = await client.query(
       `SELECT code FROM arena_matches
