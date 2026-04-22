@@ -47,16 +47,6 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE ?? '').toLowerCase() === 'tru
 const SMTP_USER = process.env.SMTP_USER ?? '';
 const SMTP_PASS = process.env.SMTP_PASS ?? '';
 const SMTP_FROM = process.env.SMTP_FROM ?? '';
-const ARENA_BOT_PROFILES = [
-  { key: 'spark', rating: 980, names: ['Spark Bot', 'Rookie Bot'] },
-  { key: 'flame', rating: 1100, names: ['Flame Bot', 'Pulse Bot'] },
-  { key: 'ember', rating: 1250, names: ['Ember Bot', 'Core Bot'] },
-  { key: 'blaze', rating: 1425, names: ['Blaze Bot', 'Forge Bot'] },
-  { key: 'storm', rating: 1600, names: ['Storm Bot', 'Volt Bot'] },
-  { key: 'thunder', rating: 1780, names: ['Thunder Bot', 'Nova Bot'] },
-  { key: 'legend', rating: 1980, names: ['Legend Bot', 'Titan Bot'] },
-  { key: 'champion', rating: 2150, names: ['Champion Bot', 'Apex Bot'] },
-];
 
 const mailTransport = SMTP_HOST && SMTP_FROM
   ? nodemailer.createTransport({
@@ -2534,40 +2524,38 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function pickArenaBotProfile(userRating) {
-  const sorted = [...ARENA_BOT_PROFILES].sort((a, b) => Math.abs(a.rating - userRating) - Math.abs(b.rating - userRating));
-  const shortlist = sorted.slice(0, Math.min(4, sorted.length));
-  return shortlist[Math.floor(Math.random() * shortlist.length)] ?? sorted[0];
+/** Returns a stable bot config for the given arena level. */
+function getLevelBotConfig(levelId) {
+  // Rating scales with level difficulty for realistic simulation
+  let rating;
+  if (levelId <= 15)       rating = 1000;
+  else if (levelId <= 30)  rating = 1200;
+  else if (levelId <= 50)  rating = 1400;
+  else if (levelId <= 70)  rating = 1600;
+  else if (levelId <= 80)  rating = 1800;
+  else                     rating = 2000;
+  return { key: `lv${levelId}`, displayName: `PentaBot Lv.${levelId}`, rating };
 }
 
-function buildArenaBotDisplayName(profile) {
-  const base = profile.names[Math.floor(Math.random() * profile.names.length)] ?? 'Arena Bot';
-  return `${base} [BOT]`;
-}
-
-async function ensureArenaBotUser(client, profile) {
-  const loginName = `arena-bot-${profile.key}`;
+/** Ensures a bot user exists for the given level, returns { id, rating }. */
+async function ensureLevelBotUser(client, levelId) {
+  const cfg = getLevelBotConfig(levelId);
+  const loginName = `arena-bot-${cfg.key}`;
   const existing = await client.query(
-    `SELECT id, arena_rating
-     FROM users
-     WHERE provider = 'bot'
-       AND login_name = $1
-     LIMIT 1`,
+    `SELECT id, arena_rating FROM users WHERE provider = 'bot' AND login_name = $1 LIMIT 1`,
     [loginName],
   );
   if (existing.rows.length > 0) {
-    return { id: Number(existing.rows[0].id), rating: Number(existing.rows[0].arena_rating ?? profile.rating) };
+    return { id: Number(existing.rows[0].id), rating: Number(existing.rows[0].arena_rating ?? cfg.rating) };
   }
-
   const created = await client.query(
     `INSERT INTO users
        (provider, login_name, display_name, membership_tier, arena_rating, arena_matches_played, arena_wins, arena_losses)
-     VALUES
-       ('bot', $1, $2, 'basic', $3, 0, 0, 0)
+     VALUES ('bot', $1, $2, 'basic', $3, 0, 0, 0)
      RETURNING id, arena_rating`,
-    [loginName, buildArenaBotDisplayName(profile), profile.rating],
+    [loginName, cfg.displayName, cfg.rating],
   );
-  return { id: Number(created.rows[0].id), rating: Number(created.rows[0].arena_rating ?? profile.rating) };
+  return { id: Number(created.rows[0].id), rating: Number(created.rows[0].arena_rating ?? cfg.rating) };
 }
 
 function simulateArenaBotResult({
@@ -2605,15 +2593,16 @@ async function createArenaMatchRecord(client, {
   playerARating,
   playerBId,
   playerBRating,
+  levelId: explicitLevelId,
 }) {
   if (Number(playerAId) === Number(playerBId)) {
     throw new Error('arena_self_match_blocked');
   }
 
   const avgRating = Math.round((playerARating + playerBRating) / 2);
-  const levelId = arenaLevelForRating(avgRating);
+  const levelId = explicitLevelId ?? arenaLevelForRating(avgRating);
   const puzzleSeed = buildPuzzleSeed();
-  console.log(`[ARENA][createMatch] playerA=${playerAId}(r=${playerARating}) vs playerB=${playerBId}(r=${playerBRating}) avgRating=${avgRating} → levelId=${levelId} seed=${puzzleSeed}`);
+  console.log(`[ARENA][createMatch] playerA=${playerAId}(r=${playerARating}) vs playerB=${playerBId}(r=${playerBRating}) levelId=${levelId}${explicitLevelId ? '(explicit)' : `(avgRating=${avgRating})`} seed=${puzzleSeed}`);
   const [p1Id, p2Id, p1Rating, p2Rating] = Math.random() < 0.5
     ? [playerAId, playerBId, playerARating, playerBRating]
     : [playerBId, playerAId, playerBRating, playerARating];
@@ -2799,15 +2788,16 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
       console.log(`${tag} no opponent in queue`);
       if (ARENA_BOTS_ENABLED) {
         await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
-        const botProfile = pickArenaBotProfile(userRating);
-        console.log(`${tag} creating bot match — botProfile=${JSON.stringify(botProfile)}`);
-        const bot = await ensureArenaBotUser(client, botProfile);
+        const levelId = arenaLevelForRating(userRating);
+        console.log(`${tag} creating bot match — levelId=${levelId} userRating=${userRating}`);
+        const bot = await ensureLevelBotUser(client, levelId);
         console.log(`${tag} bot user ready — botId=${bot.id} botRating=${bot.rating}`);
         const matchCode = await createArenaMatchRecord(client, {
           playerAId: userId,
           playerARating: userRating,
           playerBId: bot.id,
           playerBRating: bot.rating,
+          levelId,
         });
         console.log(`${tag} bot match created — code=${matchCode}`);
         await client.query('COMMIT');
@@ -2844,15 +2834,16 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
       console.log(`${tag} rating diff too large (${ratingDiff} > ${maxDiff})`);
       if (ARENA_BOTS_ENABLED) {
         await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
-        const botProfile = pickArenaBotProfile(userRating);
-        console.log(`${tag} creating bot match (diff too large) — botProfile=${JSON.stringify(botProfile)}`);
-        const bot = await ensureArenaBotUser(client, botProfile);
+        const levelId = arenaLevelForRating(userRating);
+        console.log(`${tag} creating bot match (diff too large) — levelId=${levelId}`);
+        const bot = await ensureLevelBotUser(client, levelId);
         console.log(`${tag} bot user ready — botId=${bot.id} botRating=${bot.rating}`);
         const matchCode = await createArenaMatchRecord(client, {
           playerAId: userId,
           playerARating: userRating,
           playerBId: bot.id,
           playerBRating: bot.rating,
+          levelId,
         });
         console.log(`${tag} bot match created — code=${matchCode}`);
         await client.query('COMMIT');
@@ -2894,14 +2885,18 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
       [userId, opponentUserId],
     );
 
+    // Use avg rating for level selection in human vs human
+    const avgRating = Math.round((userRating + Number(opp.rating)) / 2);
+    const levelId = arenaLevelForRating(avgRating);
     const matchCode = await createArenaMatchRecord(client, {
       playerAId: userId,
       playerARating: userRating,
       playerBId: opponentUserId,
       playerBRating: Number(opp.rating),
+      levelId,
     });
 
-    console.log(`${tag} human vs human match created — code=${matchCode}`);
+    console.log(`${tag} human vs human match created — code=${matchCode} levelId=${levelId}`);
     await client.query('COMMIT');
     return matchCode;
   } catch (err) {
