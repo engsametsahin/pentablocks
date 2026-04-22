@@ -1682,7 +1682,7 @@ function ArenaScreen({
             <div className={cn('w-full rounded-3xl p-6 mb-6 border-2 text-black', tier.bg, tier.border)}>
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] font-bold text-black/60 mb-1">Rating</p>
+                  <p className="text-xs uppercase tracking-[0.2em] font-bold text-black/80 mb-1">Rating</p>
                   <p className="text-5xl font-black text-black">{rating}</p>
                 </div>
                 <div className={cn('px-4 py-2 rounded-2xl font-bold text-sm border bg-white/70 text-black', tier.border)}>
@@ -1693,15 +1693,15 @@ function ArenaScreen({
                 <div className="grid grid-cols-3 gap-3 text-center text-sm">
                   <div>
                     <p className="font-black text-black">{profile.matchesPlayed}</p>
-                    <p className="text-black/60 text-xs font-semibold">Played</p>
+                    <p className="text-black/80 text-xs font-semibold">Played</p>
                   </div>
                   <div>
-                    <p className="font-black text-emerald-700">{profile.wins}</p>
-                    <p className="text-black/60 text-xs font-semibold">Wins</p>
+                    <p className="font-black text-emerald-800">{profile.wins}</p>
+                    <p className="text-black/80 text-xs font-semibold">Wins</p>
                   </div>
                   <div>
-                    <p className="font-black text-red-600">{profile.losses}</p>
-                    <p className="text-black/60 text-xs font-semibold">Losses</p>
+                    <p className="font-black text-red-700">{profile.losses}</p>
+                    <p className="text-black/80 text-xs font-semibold">Losses</p>
                   </div>
                 </div>
               )}
@@ -1710,12 +1710,15 @@ function ArenaScreen({
             <div className={cn('w-full border rounded-2xl p-4 mb-6', isDark ? 'bg-white/5 border-white/10' : 'bg-white border-black/10')}>
               <p className="text-xs uppercase tracking-[0.2em] font-bold text-gray-400 mb-3">Tier Ladder</p>
               <div className="space-y-2">
-                {[...ARENA_TIERS].reverse().map((t) => (
-                  <div key={t.name} className={cn('flex items-center justify-between text-sm px-3 py-1.5 rounded-xl', t.name === tier.name ? cn(t.bg, 'font-bold') : '')}>
-                    <span className={t.color}>{t.name}</span>
-                    <span className={cn('text-xs font-semibold', isDark ? 'text-gray-300' : 'text-gray-500')}>{t.minRating}+</span>
-                  </div>
-                ))}
+                {[...ARENA_TIERS].reverse().map((t) => {
+                  const isActive = t.name === tier.name;
+                  return (
+                    <div key={t.name} className={cn('flex items-center justify-between text-sm px-3 py-1.5 rounded-xl', isActive ? cn(t.bg, 'font-bold') : '')}>
+                      <span className={isActive ? t.color : (isDark ? t.darkColor : t.color)}>{t.name}</span>
+                      <span className={cn('text-xs font-semibold', isDark ? 'text-gray-300' : 'text-gray-600')}>{t.minRating}+</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

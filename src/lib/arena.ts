@@ -104,19 +104,20 @@ export interface ArenaHistoryEntry {
 export interface ArenaTier {
   name: string;
   minRating: number;
-  color: string;       // Tailwind text color class
+  color: string;       // Tailwind text color class (light bg)
+  darkColor: string;   // Tailwind text color class (dark bg)
   bg: string;          // Tailwind bg class
   border: string;
 }
 
 export const ARENA_TIERS: ArenaTier[] = [
-  { name: 'Bronze',      minRating: 0,    color: 'text-amber-700',    bg: 'bg-amber-100',    border: 'border-amber-300'  },
-  { name: 'Silver',      minRating: 1100, color: 'text-slate-500',    bg: 'bg-slate-100',    border: 'border-slate-300'  },
-  { name: 'Gold',        minRating: 1300, color: 'text-yellow-600',   bg: 'bg-yellow-50',    border: 'border-yellow-300' },
-  { name: 'Platinum',    minRating: 1500, color: 'text-sky-600',      bg: 'bg-sky-50',       border: 'border-sky-300'    },
-  { name: 'Diamond',     minRating: 1700, color: 'text-violet-600',   bg: 'bg-violet-50',    border: 'border-violet-300' },
-  { name: 'Master',      minRating: 1900, color: 'text-red-600',      bg: 'bg-red-50',       border: 'border-red-300'    },
-  { name: 'Grandmaster', minRating: 2100, color: 'text-rose-700',     bg: 'bg-rose-50',      border: 'border-rose-400'   },
+  { name: 'Bronze',      minRating: 0,    color: 'text-amber-800',    darkColor: 'text-amber-400',   bg: 'bg-amber-100',    border: 'border-amber-300'  },
+  { name: 'Silver',      minRating: 1100, color: 'text-slate-700',    darkColor: 'text-slate-300',   bg: 'bg-slate-100',    border: 'border-slate-300'  },
+  { name: 'Gold',        minRating: 1300, color: 'text-yellow-700',   darkColor: 'text-yellow-400',  bg: 'bg-yellow-50',    border: 'border-yellow-300' },
+  { name: 'Platinum',    minRating: 1500, color: 'text-sky-700',      darkColor: 'text-sky-400',     bg: 'bg-sky-50',       border: 'border-sky-300'    },
+  { name: 'Diamond',     minRating: 1700, color: 'text-violet-700',   darkColor: 'text-violet-400',  bg: 'bg-violet-50',    border: 'border-violet-300' },
+  { name: 'Master',      minRating: 1900, color: 'text-red-700',      darkColor: 'text-red-400',     bg: 'bg-red-50',       border: 'border-red-300'    },
+  { name: 'Grandmaster', minRating: 2100, color: 'text-rose-700',     darkColor: 'text-rose-400',    bg: 'bg-rose-50',      border: 'border-rose-400'   },
 ];
 
 export function getArenaTier(rating: number): ArenaTier {

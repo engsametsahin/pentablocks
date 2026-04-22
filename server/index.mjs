@@ -31,6 +31,7 @@ const ARENA_MAX_RATING_DIFF_INITIAL = 200;  // ilk 30sn
 const ARENA_MAX_RATING_DIFF_RELAXED = 400;  // 30-60sn
 // 60sn sonra herhangi biriyle eşleştir
 const ARENA_BOTS_ENABLED = String(process.env.ARENA_BOTS_ENABLED ?? 'true').toLowerCase() !== 'false';
+const ARENA_BOT_DELAY_SECONDS = Number(process.env.ARENA_BOT_DELAY_SECONDS ?? '10'); // wait for real player before falling back to bot
 const ROOM_START_DELAY_SECONDS = 5;
 const ROOM_ROUND_TIMEOUT_SECONDS = 240;
 const ROOM_DEFAULT_MAX_PLAYERS = 8;
@@ -2779,13 +2780,51 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
     // Clean expired entries
     await client.query(`DELETE FROM arena_queue WHERE expires_at <= NOW()`);
 
-    // Find best opponent (closest rating, not self, still in queue)
+    // How long has the current user been waiting in the queue?
+    const myQueueQ = await client.query(
+      `SELECT EXTRACT(EPOCH FROM (NOW() - joined_at))::int AS wait_seconds
+       FROM arena_queue WHERE user_id = $1`,
+      [userId],
+    );
+    const myWaitSeconds = myQueueQ.rows.length > 0 ? Number(myQueueQ.rows[0].wait_seconds) : 0;
+
+    // Helper: join or refresh the user's queue entry (preserves original joined_at)
+    const joinQueue = () => client.query(
+      `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
+       VALUES ($1, $2, NOW(), NOW() + make_interval(secs => $3))
+       ON CONFLICT (user_id) DO UPDATE
+         SET rating = $2,
+             expires_at = NOW() + make_interval(secs => $3)`,
+      [userId, userRating, ARENA_QUEUE_TTL_SECONDS],
+    );
+
+    // Helper: create a bot match for the current user
+    const createBotMatch = async () => {
+      await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
+      const levelId = arenaLevelForRating(userRating);
+      const tierCfg = getTierBotConfig(userRating);
+      console.log(`${tag} creating bot match — levelId=${levelId} tier=${tierCfg.key} botName=${tierCfg.displayName}`);
+      const bot = await ensureTierBotUser(client, userRating);
+      console.log(`${tag} bot user ready — botId=${bot.id} botRating=${bot.rating}`);
+      const code = await createArenaMatchRecord(client, {
+        playerAId: userId,
+        playerARating: userRating,
+        playerBId: bot.id,
+        playerBRating: bot.rating,
+        levelId,
+      });
+      console.log(`${tag} bot match created — code=${code}`);
+      return code;
+    };
+
+    // Find best real opponent (closest rating, not self)
     const opponentQ = await client.query(
       `SELECT q.user_id, q.rating, q.joined_at,
               EXTRACT(EPOCH FROM (NOW() - q.joined_at))::int AS wait_seconds
        FROM arena_queue q
        JOIN users u ON u.id = q.user_id
        WHERE q.user_id != $1
+         AND u.provider != 'bot'
          AND ($3::text = '' OR LOWER(COALESCE(u.display_name, '')) <> LOWER($3::text))
        ORDER BY ABS(q.rating - $2) ASC, q.joined_at ASC
        LIMIT 1
@@ -2794,35 +2833,14 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
     );
 
     if (opponentQ.rows.length === 0) {
-      console.log(`${tag} no opponent in queue`);
-      if (ARENA_BOTS_ENABLED) {
-        await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
-        const levelId = arenaLevelForRating(userRating);
-        const tierCfg = getTierBotConfig(userRating);
-        console.log(`${tag} creating bot match — levelId=${levelId} tier=${tierCfg.key} botName=${tierCfg.displayName}`);
-        const bot = await ensureTierBotUser(client, userRating);
-        console.log(`${tag} bot user ready — botId=${bot.id} botRating=${bot.rating}`);
-        const matchCode = await createArenaMatchRecord(client, {
-          playerAId: userId,
-          playerARating: userRating,
-          playerBId: bot.id,
-          playerBRating: bot.rating,
-          levelId,
-        });
-        console.log(`${tag} bot match created — code=${matchCode}`);
+      console.log(`${tag} no real opponent in queue (myWait=${myWaitSeconds}s)`);
+      if (ARENA_BOTS_ENABLED && myWaitSeconds >= ARENA_BOT_DELAY_SECONDS) {
+        const matchCode = await createBotMatch();
         await client.query('COMMIT');
         return matchCode;
       }
-      // No one waiting — join queue
-      console.log(`${tag} bots disabled, joining queue (TTL=${ARENA_QUEUE_TTL_SECONDS}s)`);
-      await client.query(
-        `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
-         VALUES ($1, $2, NOW(), NOW() + make_interval(secs => $3))
-         ON CONFLICT (user_id) DO UPDATE
-           SET rating = $2, joined_at = NOW(),
-               expires_at = NOW() + make_interval(secs => $3)`,
-        [userId, userRating, ARENA_QUEUE_TTL_SECONDS],
-      );
+      console.log(`${tag} joining queue to wait for real opponent (myWait=${myWaitSeconds}s botDelay=${ARENA_BOT_DELAY_SECONDS}s)`);
+      await joinQueue();
       await client.query('COMMIT');
       return null;
     }
@@ -2831,45 +2849,24 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
     const ratingDiff = Math.abs(userRating - Number(opp.rating));
     const waitSecs = Number(opp.wait_seconds ?? 0);
 
-    // Rating diff threshold relaxes over time
+    // Rating diff threshold relaxes over time (based on opponent's wait)
     const maxDiff = waitSecs >= 60
       ? Infinity
       : waitSecs >= 30
         ? ARENA_MAX_RATING_DIFF_RELAXED
         : ARENA_MAX_RATING_DIFF_INITIAL;
 
-    console.log(`${tag} found opponent u${opp.user_id} rating=${opp.rating} waitSecs=${waitSecs} ratingDiff=${ratingDiff} maxDiff=${maxDiff}`);
+    console.log(`${tag} found real opponent u${opp.user_id} rating=${opp.rating} oppWait=${waitSecs}s myWait=${myWaitSeconds}s ratingDiff=${ratingDiff} maxDiff=${maxDiff}`);
 
     if (ratingDiff > maxDiff) {
       console.log(`${tag} rating diff too large (${ratingDiff} > ${maxDiff})`);
-      if (ARENA_BOTS_ENABLED) {
-        await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
-        const levelId = arenaLevelForRating(userRating);
-        const tierCfg2 = getTierBotConfig(userRating);
-        console.log(`${tag} creating bot match (diff too large) — levelId=${levelId} tier=${tierCfg2.key}`);
-        const bot = await ensureTierBotUser(client, userRating);
-        console.log(`${tag} bot user ready — botId=${bot.id} botRating=${bot.rating}`);
-        const matchCode = await createArenaMatchRecord(client, {
-          playerAId: userId,
-          playerARating: userRating,
-          playerBId: bot.id,
-          playerBRating: bot.rating,
-          levelId,
-        });
-        console.log(`${tag} bot match created — code=${matchCode}`);
+      if (ARENA_BOTS_ENABLED && myWaitSeconds >= ARENA_BOT_DELAY_SECONDS) {
+        const matchCode = await createBotMatch();
         await client.query('COMMIT');
         return matchCode;
       }
-      // Not close enough yet — join queue and wait
-      console.log(`${tag} bots disabled, joining queue to wait for closer opponent`);
-      await client.query(
-        `INSERT INTO arena_queue (user_id, rating, joined_at, expires_at)
-         VALUES ($1, $2, NOW(), NOW() + make_interval(secs => $3))
-         ON CONFLICT (user_id) DO UPDATE
-           SET rating = $2, joined_at = NOW(),
-               expires_at = NOW() + make_interval(secs => $3)`,
-        [userId, userRating, ARENA_QUEUE_TTL_SECONDS],
-      );
+      console.log(`${tag} staying in queue (myWait=${myWaitSeconds}s botDelay=${ARENA_BOT_DELAY_SECONDS}s)`);
+      await joinQueue();
       await client.query('COMMIT');
       return null;
     }
