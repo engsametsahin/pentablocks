@@ -3145,6 +3145,26 @@ app.get('/api/arena/queue/status', async (req, res) => {
     if (queueQ.rows.length > 0) {
       const row = queueQ.rows[0];
       const waitSeconds = Math.round((Date.now() - new Date(row.joined_at).getTime()) / 1000);
+      // Re-run matchmaking on each poll so bots can be injected if the join call couldn't do it
+      if (waitSeconds >= 2) {
+        try {
+          const matchCode = await runArenaMatchmaking(
+            Number(user.id),
+            user.arena_rating ?? 1000,
+            user.display_name ?? '',
+          );
+          if (matchCode) {
+            await pool.query(
+              `UPDATE arena_matches SET status = 'active' WHERE code = $1 AND status = 'pending'`,
+              [matchCode],
+            );
+            res.json({ status: 'matched', matchCode });
+            return;
+          }
+        } catch (pollErr) {
+          console.error('arena queue poll matchmaking error', pollErr);
+        }
+      }
       res.json({ status: 'waiting', waitSeconds });
     } else {
       res.json({ status: 'idle' });

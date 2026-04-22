@@ -3257,7 +3257,14 @@ export default function App() {
   const reservedChromePx = isMobileView ? 280 : 220;
   const availableStashPx = Math.max(80, viewportHeight - boardHeightPx - reservedChromePx);
   const totalStashPieces = availablePieces.length;
-  const stashContainerWidth = isMobileView ? viewportWidth : Math.max(200, viewportWidth - 240);
+  // Game content is capped by max-w-5xl (1024px) with p-4/p-8 outer padding.
+  // On desktop (lg: ≥1024px) the sidebar is lg:w-48 (192px) + gap-8 (32px).
+  // Below lg the layout stacks so the stash gets the full content width.
+  const isDesktopLayout = viewportWidth >= 1024;
+  const gameContentWidth = Math.min(viewportWidth - (isMobileView ? 32 : 64), 1024);
+  const stashContainerWidth = isDesktopLayout
+    ? Math.max(200, gameContentWidth - 224) // 192px sidebar + 32px gap
+    : Math.max(200, gameContentWidth);
   const piecesPerRowEstimate = Math.max(2, Math.floor(stashContainerWidth / (cellSize * 4)));
   const estimatedRows = Math.ceil(totalStashPieces / piecesPerRowEstimate);
   const dynamicRowHeight = estimatedRows > 0 ? availableStashPx / estimatedRows : availableStashPx;
