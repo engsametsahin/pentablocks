@@ -3121,6 +3121,18 @@ app.post('/api/arena/queue/join', async (req, res) => {
 
   console.log(`[ARENA][join] u${user.id} "${user.display_name}" rating=${user.arena_rating ?? 1000} provider=${user.provider}`);
   try {
+    // Joining = explicit intent for a NEW match; abort any leftover pending/active matches
+    const aborted = await pool.query(
+      `UPDATE arena_matches SET status = 'aborted', finished_at = NOW(), winner_id = NULL
+       WHERE (player1_id = $1 OR player2_id = $1)
+         AND player1_id <> player2_id
+         AND status IN ('pending', 'active')
+       RETURNING code`,
+      [user.id],
+    );
+    if (aborted.rowCount > 0) {
+      console.log(`[ARENA][join] aborted leftover matches: ${aborted.rows.map(r => r.code).join(', ')}`);
+    }
     const matchCode = await runArenaMatchmaking(
       Number(user.id),
       user.arena_rating ?? 1000,

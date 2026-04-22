@@ -3588,7 +3588,7 @@ export default function App() {
     setPlayerStats(payload.playerStats);
     setRecentPuzzleFingerprints(normalizeRecentPuzzleFingerprints(payload.recentPuzzleFingerprints ?? []));
     setSinglePlayerLevel(normalizedLastLevel);
-    if (gameMode !== 'multiplayer') {
+    if (gameMode !== 'multiplayer' && gameMode !== 'arena') {
       setLevel(normalizedLastLevel);
     }
   }, [gameMode]);
