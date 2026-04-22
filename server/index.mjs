@@ -947,7 +947,7 @@ async function updateRegisteredMultiplayerStats(userId, didWin, elapsedSeconds) 
 
 function toUserDto(row) {
   return {
-    id: row.id,
+    id: Number(row.id),
     provider: row.provider,
     displayName: row.display_name,
     email: row.email,
@@ -2539,13 +2539,24 @@ function getTierBotConfig(userRating) {
 async function ensureTierBotUser(client, userRating) {
   const cfg = getTierBotConfig(userRating);
   const loginName = `arena-bot-${cfg.key}`;
+
+  // Find existing bot and always ensure display_name is set correctly
   const existing = await client.query(
-    `SELECT id, arena_rating FROM users WHERE provider = 'bot' AND login_name = $1 LIMIT 1`,
+    `SELECT id, arena_rating, display_name FROM users WHERE provider = 'bot' AND login_name = $1 LIMIT 1`,
     [loginName],
   );
   if (existing.rows.length > 0) {
-    return { id: Number(existing.rows[0].id), rating: Number(existing.rows[0].arena_rating ?? cfg.rating) };
+    const row = existing.rows[0];
+    // Fix display_name if it was null/wrong from a previous session
+    if (row.display_name !== cfg.displayName) {
+      await client.query(
+        `UPDATE users SET display_name = $1 WHERE id = $2`,
+        [cfg.displayName, row.id],
+      );
+    }
+    return { id: Number(row.id), rating: Number(row.arena_rating ?? cfg.rating) };
   }
+
   const created = await client.query(
     `INSERT INTO users
        (provider, login_name, display_name, membership_tier, arena_rating, arena_matches_played, arena_wins, arena_losses)
