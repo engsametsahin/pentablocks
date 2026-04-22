@@ -20,7 +20,10 @@
       "Bash(node -e \" const { LEVEL_DATA } = require\\('./src/level-data.ts'\\) || {}; // Actually let's just read the level-data file \")",
       "Bash(node --input-type=module)",
       "Bash(awk 'NR>=5628 && NR<=5750' src/App.tsx)",
-      "Bash(grep -v \"//\\\\|useState\\\\|useMemo\\\\|useEffect\\\\|useRef\\\\|useCallback\\\\|setMulti\\\\|import\\\\|//.*isMulti\")"
+      "Bash(grep -v \"//\\\\|useState\\\\|useMemo\\\\|useEffect\\\\|useRef\\\\|useCallback\\\\|setMulti\\\\|import\\\\|//.*isMulti\")",
+      "Bash(cat tailwind.config.js)",
+      "Bash(cat tailwind.config.ts)",
+      "Bash(cat tailwind.config.cjs)"
     ],
     "defaultMode": "bypassPermissions"
   }
