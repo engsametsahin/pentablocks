@@ -6116,9 +6116,26 @@ export default function App() {
             className="fixed inset-0 bg-black/45 backdrop-blur-sm z-55 flex items-center justify-center p-4"
           >
             <div className="bg-white p-10 rounded-[40px] shadow-2xl max-w-sm w-full text-center">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Multiplayer Start</p>
-              <h2 className="text-4xl font-black mb-2">{multiplayerCountdownSeconds}</h2>
-              <p className="text-sm text-gray-500">Get ready. Both players start together.</p>
+              {isArenaRound ? (
+                <>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-red-500 font-bold mb-2">Arena Match</p>
+                  <h2 className="text-4xl font-black mb-2">{multiplayerCountdownSeconds}</h2>
+                  <p className="text-sm text-gray-500">
+                    vs {(() => {
+                      const uid = typeof authUser?.id === 'number' ? authUser.id : null;
+                      if (!arenaMatch) return '…';
+                      if (arenaMatch.player1.id === uid) return arenaMatch.player2.displayName ?? 'Opponent';
+                      return arenaMatch.player1.displayName ?? 'Opponent';
+                    })()}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-2">Multiplayer Start</p>
+                  <h2 className="text-4xl font-black mb-2">{multiplayerCountdownSeconds}</h2>
+                  <p className="text-sm text-gray-500">Get ready. Both players start together.</p>
+                </>
+              )}
             </div>
           </motion.div>
         )}

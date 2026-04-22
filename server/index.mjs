@@ -2524,22 +2524,20 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Returns a stable bot config for the given arena level. */
-function getLevelBotConfig(levelId) {
-  // Rating scales with level difficulty for realistic simulation
-  let rating;
-  if (levelId <= 15)       rating = 1000;
-  else if (levelId <= 30)  rating = 1200;
-  else if (levelId <= 50)  rating = 1400;
-  else if (levelId <= 70)  rating = 1600;
-  else if (levelId <= 80)  rating = 1800;
-  else                     rating = 2000;
-  return { key: `lv${levelId}`, displayName: `PentaBot Lv.${levelId}`, rating };
+/** Returns tier bot config based on the player's arena rating. */
+function getTierBotConfig(userRating) {
+  if (userRating >= 2100) return { key: 'grandmaster', displayName: 'PentaBot [Grandmaster]', rating: 2200 };
+  if (userRating >= 1900) return { key: 'master',       displayName: 'PentaBot [Master]',       rating: 2000 };
+  if (userRating >= 1700) return { key: 'diamond',      displayName: 'PentaBot [Diamond]',      rating: 1800 };
+  if (userRating >= 1500) return { key: 'platinum',     displayName: 'PentaBot [Platinum]',     rating: 1600 };
+  if (userRating >= 1300) return { key: 'gold',         displayName: 'PentaBot [Gold]',         rating: 1400 };
+  if (userRating >= 1100) return { key: 'silver',       displayName: 'PentaBot [Silver]',       rating: 1200 };
+  return                         { key: 'bronze',       displayName: 'PentaBot [Bronze]',       rating: 1000 };
 }
 
-/** Ensures a bot user exists for the given level, returns { id, rating }. */
-async function ensureLevelBotUser(client, levelId) {
-  const cfg = getLevelBotConfig(levelId);
+/** Ensures a tier bot user exists, returns { id, rating }. */
+async function ensureTierBotUser(client, userRating) {
+  const cfg = getTierBotConfig(userRating);
   const loginName = `arena-bot-${cfg.key}`;
   const existing = await client.query(
     `SELECT id, arena_rating FROM users WHERE provider = 'bot' AND login_name = $1 LIMIT 1`,
@@ -2789,8 +2787,9 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
       if (ARENA_BOTS_ENABLED) {
         await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
         const levelId = arenaLevelForRating(userRating);
-        console.log(`${tag} creating bot match — levelId=${levelId} userRating=${userRating}`);
-        const bot = await ensureLevelBotUser(client, levelId);
+        const tierCfg = getTierBotConfig(userRating);
+        console.log(`${tag} creating bot match — levelId=${levelId} tier=${tierCfg.key} botName=${tierCfg.displayName}`);
+        const bot = await ensureTierBotUser(client, userRating);
         console.log(`${tag} bot user ready — botId=${bot.id} botRating=${bot.rating}`);
         const matchCode = await createArenaMatchRecord(client, {
           playerAId: userId,
@@ -2835,8 +2834,9 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
       if (ARENA_BOTS_ENABLED) {
         await client.query(`DELETE FROM arena_queue WHERE user_id = $1`, [userId]);
         const levelId = arenaLevelForRating(userRating);
-        console.log(`${tag} creating bot match (diff too large) — levelId=${levelId}`);
-        const bot = await ensureLevelBotUser(client, levelId);
+        const tierCfg2 = getTierBotConfig(userRating);
+        console.log(`${tag} creating bot match (diff too large) — levelId=${levelId} tier=${tierCfg2.key}`);
+        const bot = await ensureTierBotUser(client, userRating);
         console.log(`${tag} bot user ready — botId=${bot.id} botRating=${bot.rating}`);
         const matchCode = await createArenaMatchRecord(client, {
           playerAId: userId,
