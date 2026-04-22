@@ -4858,37 +4858,6 @@ export default function App() {
     });
   }, []);
 
-  const ensurePieceStaysReachable = useCallback((id: string) => {
-    // If a piece is dropped fully outside the board, auto-return it to stash.
-    // This prevents "missing piece" states that can feel like unsolvable puzzles.
-    setPlacedPieces((prev) => {
-      const piece = prev.find((p) => p.id === id);
-      if (!piece) return prev;
-
-      const intersectsBoard = piece.currentShape.some((cell) => {
-        const x = piece.position.x + cell.x;
-        const y = piece.position.y + cell.y;
-        return x >= 0 && x < gridWidth && y >= 0 && y < gridHeight;
-      });
-      if (intersectsBoard) return prev;
-
-      setAvailablePieces((ap) => {
-        if (ap.some((p) => p.id === id)) return ap;
-        return [
-          ...ap,
-          {
-            id: piece.id,
-            name: piece.name,
-            shape: orientShapeForStash(piece.currentShape),
-            color: piece.color,
-          },
-        ];
-      });
-
-      return prev.filter((p) => p.id !== id);
-    });
-  }, [gridHeight, gridWidth]);
-
   const resetPiecesToStash = useCallback(() => {
     const allIds = stashOrderRef.current.length > 0
       ? stashOrderRef.current
@@ -5069,7 +5038,6 @@ export default function App() {
   };
 
   const handlePointerUp = useCallback((pointerId?: number | null) => {
-    const releasedPieceId = dragStartRef.current?.id ?? null;
     if (isDraggingRef.current) {
       setDraggedPiece(null);
     }
@@ -5077,10 +5045,7 @@ export default function App() {
     dragStartRef.current = null;
     isDraggingRef.current = false;
     clearPointerTrack();
-    if (releasedPieceId) {
-      ensurePieceStaysReachable(releasedPieceId);
-    }
-  }, [clearPointerTrack, ensurePieceStaysReachable, releaseCapturedPointer]);
+  }, [clearPointerTrack, releaseCapturedPointer]);
 
   // ── Global event listeners ────────────────────────────────────────────────
   // Touch events are dispatched to the ORIGINAL target element, not whatever
