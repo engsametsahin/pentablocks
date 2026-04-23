@@ -2495,30 +2495,29 @@ app.get('/api/multiplayer/stats', async (req, res) => {
 
 // ── Arena helpers ──────────────────────────────────────────────────────────────
 
-/** Randomly pick one element from an array. */
-function pickFrom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+/** Returns a random integer in [min, max] inclusive. */
+function pickRange(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
 }
 
 /**
  * Rating-based level selection for arena matches.
- * Each tier draws from a curated pool of balanced-grid levels
- * (roughly square or ≤2:1 aspect — no extreme narrow strips).
- * Grid shapes (after client getBoardDimensions wider-side flip):
- *   Bronze  5,8,11,14,15 → 4×3 / 4×3 / 4×3 / 5×3 / 5×3   (~12-15 cells)
- *   Silver  18-20,24,25  → 4×4 / 4×4 / 4×4 / 6×3 / 6×3   (~16-18 cells)
- *   Gold    31-35        → 5×4 family                       (~20-21 cells)
- *   Plat.   51,54,62,63  → 6×4 / 5×5 / 7×4 / 7×4          (~24-28 cells)
- *   Diamond 65,66,68     → 6×5 family                       (~30 cells)
- *   Master  71,78,79     → 8×4 family                       (~32 cells)
+ *   Bronze      0–1099  → LV  1–15
+ *   Silver   1100–1299  → LV 16–30
+ *   Gold     1300–1499  → LV 31–45
+ *   Platinum 1500–1699  → LV 46–60
+ *   Diamond  1700–1899  → LV 61–75
+ *   Master   1900–2099  → LV 76–85
+ *   Grandmaster  2100+  → LV 86–100
  */
 function arenaLevelForRating(avgRating) {
-  if (avgRating < 1100) return pickFrom([5, 8, 11, 14, 15]);
-  if (avgRating < 1300) return pickFrom([18, 19, 20, 24, 25]);
-  if (avgRating < 1500) return pickFrom([31, 32, 33, 34, 35]);
-  if (avgRating < 1700) return pickFrom([51, 54, 62, 63]);
-  if (avgRating < 1900) return pickFrom([65, 66, 68]);
-  return pickFrom([71, 78, 79]);
+  if (avgRating < 1100) return pickRange(1, 15);
+  if (avgRating < 1300) return pickRange(16, 30);
+  if (avgRating < 1500) return pickRange(31, 45);
+  if (avgRating < 1700) return pickRange(46, 60);
+  if (avgRating < 1900) return pickRange(61, 75);
+  if (avgRating < 2100) return pickRange(76, 85);
+  return pickRange(86, 100);
 }
 
 function clampNumber(value, min, max) {

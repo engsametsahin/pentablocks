@@ -1463,6 +1463,8 @@ function StatsScreen({
   completedLevels,
   bestTimes,
   playerStats,
+  authUser,
+  arenaProfile,
   onBack,
   onPlay,
   resolvedTheme,
@@ -1470,6 +1472,8 @@ function StatsScreen({
   completedLevels: Set<number>;
   bestTimes: Record<number, number>;
   playerStats: PlayerStats;
+  authUser: import('./lib/cloud').CloudUser | null;
+  arenaProfile: import('./lib/arena').ArenaProfile | null;
   onBack: () => void;
   onPlay: () => void;
   resolvedTheme: 'dark' | 'light';
@@ -1485,6 +1489,12 @@ function StatsScreen({
   const winRate = playerStats.gamesStarted > 0
     ? Math.round((playerStats.wins / playerStats.gamesStarted) * 100)
     : 0;
+  const arenaRating = arenaProfile?.rating ?? authUser?.arenaRating ?? null;
+  const arenaMatchesPlayed = arenaProfile?.matchesPlayed ?? authUser?.arenaMatchesPlayed ?? 0;
+  const arenaWins = arenaProfile?.wins ?? authUser?.arenaWins ?? 0;
+  const arenaLosses = arenaProfile?.losses ?? authUser?.arenaLosses ?? 0;
+  const arenaWinRate = arenaMatchesPlayed > 0 ? Math.round((arenaWins / arenaMatchesPlayed) * 100) : null;
+  const arenaTier = arenaRating !== null ? getArenaTier(arenaRating) : null;
   const currentStreak = (() => {
     let streak = 0;
     for (let i = 1; i <= MAX_LEVEL; i++) {
@@ -1559,6 +1569,43 @@ function StatsScreen({
             <p className={cn('text-sm mt-1', dark ? 'text-gray-400' : 'text-gray-500')}>Tracked from active in-level play</p>
           </div>
         </div>
+
+        {arenaRating !== null && (
+          <div className={cn('rounded-[32px] p-6 border shadow-sm mb-4', cardCn)}>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-bold mb-4">Arena</p>
+            <div className="flex flex-col sm:flex-row gap-6">
+              <div className="flex items-center gap-4">
+                <div className={cn('px-4 py-2 rounded-2xl font-bold text-sm border', arenaTier!.bg, arenaTier!.border)}>
+                  <span className={arenaTier!.color}>{arenaTier!.name}</span>
+                </div>
+                <div>
+                  <p className={cn('text-xs font-semibold', dark ? 'text-gray-400' : 'text-gray-500')}>Rating</p>
+                  <p className="text-3xl font-black">{arenaRating}</p>
+                </div>
+              </div>
+              <div className="flex gap-6 text-sm">
+                <div>
+                  <p className={cn('text-xs font-semibold mb-1', dark ? 'text-gray-400' : 'text-gray-500')}>Played</p>
+                  <p className="text-2xl font-black">{arenaMatchesPlayed}</p>
+                </div>
+                <div>
+                  <p className={cn('text-xs font-semibold mb-1', dark ? 'text-gray-400' : 'text-gray-500')}>Wins</p>
+                  <p className="text-2xl font-black text-emerald-500">{arenaWins}</p>
+                </div>
+                <div>
+                  <p className={cn('text-xs font-semibold mb-1', dark ? 'text-gray-400' : 'text-gray-500')}>Losses</p>
+                  <p className="text-2xl font-black text-red-500">{arenaLosses}</p>
+                </div>
+                {arenaWinRate !== null && (
+                  <div>
+                    <p className={cn('text-xs font-semibold mb-1', dark ? 'text-gray-400' : 'text-gray-500')}>Win Rate</p>
+                    <p className="text-2xl font-black">{arenaWinRate}%</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid gap-4 md:grid-cols-[1.3fr_1fr]">
           <div className={cn('text-white rounded-[32px] p-6 shadow-2xl', dark ? 'bg-white/5 border border-white/10' : 'bg-gray-900')}>
@@ -5604,6 +5651,8 @@ export default function App() {
           completedLevels={completedLevels}
           bestTimes={bestTimes}
           playerStats={playerStats}
+          authUser={authUser}
+          arenaProfile={arenaProfile}
           onBack={() => setScreen('menu')}
           onPlay={() => setScreen('levelSelect')}
           resolvedTheme={resolvedTheme}
