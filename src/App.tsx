@@ -4248,6 +4248,18 @@ export default function App() {
     return () => { active = false; window.clearInterval(interval); };
   }, [gameMode, arenaMatch]);
 
+  // Arena: when opponent finishes first (match becomes 'finished' while we're still playing),
+  // immediately end the game and show the result screen.
+  useEffect(() => {
+    if (gameMode !== 'arena' || !arenaMatch) return;
+    if (arenaPhase !== 'playing') return;
+    if (arenaMatch.status !== 'finished' && arenaMatch.status !== 'aborted') return;
+
+    // Match ended externally — stop the game and go to result
+    setIsActive(false);
+    setArenaPhase('result');
+  }, [gameMode, arenaMatch, arenaPhase]);
+
   // Load arena profile when entering arena screen
   useEffect(() => {
     if (screen !== 'arena' || !authUser || authUser.provider === 'guest') return;
