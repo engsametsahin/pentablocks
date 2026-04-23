@@ -2813,6 +2813,61 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
         levelId,
       });
       console.log(`${tag} bot match created — code=${code}`);
+
+      // Pre-simulate bot result so the match finalizes at the bot's virtual finish time
+      const matchRowQ = await client.query(
+        `SELECT id, start_at, timeout_seconds, level_id, player1_id, player2_id,
+                player1_rating, player2_rating
+         FROM arena_matches WHERE code = $1`,
+        [code],
+      );
+      if (matchRowQ.rows.length > 0) {
+        const mr = matchRowQ.rows[0];
+        const matchId = Number(mr.id);
+        const timeoutSecs = Number(mr.timeout_seconds);
+        const botIsP1 = Number(mr.player1_id) === Number(bot.id);
+        const botRating = botIsP1 ? Number(mr.player1_rating) : Number(mr.player2_rating);
+        const humanRating = botIsP1 ? Number(mr.player2_rating) : Number(mr.player1_rating);
+
+        const simulated = simulateArenaBotResult({
+          botRating,
+          humanRating,
+          timeoutSeconds: timeoutSecs,
+          levelId: Number(mr.level_id),
+          humanDidFinish: null,
+        });
+
+        // Bot finish time = match start + bot elapsed. startAt is in the future (start delay).
+        const startAt = new Date(mr.start_at);
+        let botSubmittedAt;
+        if (simulated.didFinish) {
+          botSubmittedAt = new Date(startAt.getTime() + simulated.elapsedSeconds * 1000);
+        } else {
+          // Bot DNF: submitted at match end (timeout)
+          botSubmittedAt = new Date(startAt.getTime() + timeoutSecs * 1000);
+        }
+
+        await client.query(
+          `INSERT INTO arena_match_results
+             (match_id, user_id, did_finish, elapsed_seconds, remaining_seconds,
+              rating_before, rating_after, rating_change, submitted_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$6,0,$7)
+           ON CONFLICT (match_id, user_id) DO NOTHING`,
+          [matchId, bot.id, simulated.didFinish, simulated.elapsedSeconds,
+           simulated.remainingSeconds, botRating, botSubmittedAt],
+        );
+        console.log(`${tag} pre-simulated bot result — didFinish=${simulated.didFinish} elapsed=${simulated.elapsedSeconds}s botSubmittedAt=${botSubmittedAt.toISOString()}`);
+
+        // Schedule server-side finalization at bot's virtual submit time
+        const delayMs = Math.max(0, botSubmittedAt.getTime() - Date.now()) + 500;
+        setTimeout(() => {
+          finalizeArenaMatchIfReady(code).catch((err) =>
+            console.error(`[ARENA] scheduled bot finalization failed for ${code}:`, err),
+          );
+        }, delayMs);
+        console.log(`${tag} scheduled finalization in ${Math.round(delayMs / 1000)}s`);
+      }
+
       return code;
     };
 
@@ -2986,10 +3041,18 @@ async function finalizeArenaMatchIfReady(matchCode) {
       }
     }
 
+    const humanResultRow = humanUserId ? resultsQ.rows.find((r) => Number(r.user_id) === humanUserId) : null;
+    const botResultRow = botUserId ? resultsQ.rows.find((r) => Number(r.user_id) === botUserId) : null;
     const bothSubmitted = resultsQ.rows.length === 2;
+    // Bot pre-simulated result is "due" when its virtual submitted_at is in the past
+    const botResultDue = botResultRow && botResultRow.submitted_at
+      ? new Date(botResultRow.submitted_at) <= new Date()
+      : false;
+    // Match can finalize if bot finished (due) even if human hasn't submitted yet
+    const botWonEarly = !!botUserId && botResultDue && !humanResultRow;
     const timedOut = new Date(match.start_at).getTime() + match.timeout_seconds * 1000 < Date.now();
 
-    if (!bothSubmitted && !timedOut) { await client.query('COMMIT'); return; }
+    if (!bothSubmitted && !botWonEarly && !timedOut) { await client.query('COMMIT'); return; }
 
     // Determine winner
     const r1 = resultsQ.rows.find((r) => Number(r.user_id) === Number(match.player1_id));
