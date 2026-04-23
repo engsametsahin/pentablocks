@@ -3044,11 +3044,11 @@ async function finalizeArenaMatchIfReady(matchCode) {
     const humanResultRow = humanUserId ? resultsQ.rows.find((r) => Number(r.user_id) === humanUserId) : null;
     const botResultRow = botUserId ? resultsQ.rows.find((r) => Number(r.user_id) === botUserId) : null;
     const bothSubmitted = resultsQ.rows.length === 2;
-    // Bot pre-simulated result is "due" when its virtual submitted_at is in the past
-    const botResultDue = botResultRow && botResultRow.submitted_at
+    // Bot pre-simulated result is "due" when it actually finished AND its virtual time is past
+    const botResultDue = botResultRow && botResultRow.did_finish && botResultRow.submitted_at
       ? new Date(botResultRow.submitted_at) <= new Date()
       : false;
-    // Match can finalize if bot finished (due) even if human hasn't submitted yet
+    // Match can finalize early only if bot actually won (finished before human submitted)
     const botWonEarly = !!botUserId && botResultDue && !humanResultRow;
     const timedOut = new Date(match.start_at).getTime() + match.timeout_seconds * 1000 < Date.now();
 
