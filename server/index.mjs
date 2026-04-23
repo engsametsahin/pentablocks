@@ -3020,6 +3020,20 @@ async function finalizeArenaMatchIfReady(matchCode) {
     }
     // both DNF → draw
 
+    // 1v1: when there is a clear winner, the loser gets DNF.
+    // The match ended at the moment the winner finished — the loser never completed it.
+    if (winnerId !== null) {
+      const loserId = winnerId === Number(match.player1_id)
+        ? Number(match.player2_id)
+        : Number(match.player1_id);
+      await client.query(
+        `UPDATE arena_match_results
+         SET did_finish = FALSE, elapsed_seconds = NULL, remaining_seconds = NULL
+         WHERE match_id = $1 AND user_id = $2`,
+        [match.id, loserId],
+      );
+    }
+
     // Calculate Elo
     const elo = calculateElo(
       match.player1_rating,
