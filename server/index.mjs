@@ -2837,35 +2837,24 @@ async function runArenaMatchmaking(userId, userRating, userDisplayName = '') {
           humanDidFinish: null,
         });
 
-        // Bot finish time = match start + bot elapsed. startAt is in the future (start delay).
-        const startAt = new Date(mr.start_at);
-        let botSubmittedAt;
         if (simulated.didFinish) {
-          botSubmittedAt = new Date(startAt.getTime() + simulated.elapsedSeconds * 1000);
-        } else {
-          // Bot DNF: submitted at match end (timeout)
-          botSubmittedAt = new Date(startAt.getTime() + timeoutSecs * 1000);
-        }
+          // Pre-insert bot finish time so every match poll can detect botWonEarly
+          const startAt = new Date(mr.start_at);
+          const botSubmittedAt = new Date(startAt.getTime() + simulated.elapsedSeconds * 1000);
 
-        await client.query(
-          `INSERT INTO arena_match_results
-             (match_id, user_id, did_finish, elapsed_seconds, remaining_seconds,
-              rating_before, rating_after, rating_change, submitted_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$6,0,$7)
-           ON CONFLICT (match_id, user_id) DO NOTHING`,
-          [matchId, bot.id, simulated.didFinish, simulated.elapsedSeconds,
-           simulated.remainingSeconds, botRating, botSubmittedAt],
-        );
-        console.log(`${tag} pre-simulated bot result — didFinish=${simulated.didFinish} elapsed=${simulated.elapsedSeconds}s botSubmittedAt=${botSubmittedAt.toISOString()}`);
-
-        // Schedule server-side finalization at bot's virtual submit time
-        const delayMs = Math.max(0, botSubmittedAt.getTime() - Date.now()) + 500;
-        setTimeout(() => {
-          finalizeArenaMatchIfReady(code).catch((err) =>
-            console.error(`[ARENA] scheduled bot finalization failed for ${code}:`, err),
+          await client.query(
+            `INSERT INTO arena_match_results
+               (match_id, user_id, did_finish, elapsed_seconds, remaining_seconds,
+                rating_before, rating_after, rating_change, submitted_at)
+             VALUES ($1,$2,TRUE,$3,$4,$5,$5,0,$6)
+             ON CONFLICT (match_id, user_id) DO NOTHING`,
+            [matchId, bot.id, simulated.elapsedSeconds, simulated.remainingSeconds,
+             botRating, botSubmittedAt],
           );
-        }, delayMs);
-        console.log(`${tag} scheduled finalization in ${Math.round(delayMs / 1000)}s`);
+          console.log(`${tag} pre-simulated bot FINISH — elapsed=${simulated.elapsedSeconds}s botSubmittedAt=${botSubmittedAt.toISOString()}`);
+        } else {
+          console.log(`${tag} pre-simulated bot DNF — will be finalized at timeout`);
+        }
       }
 
       return code;
