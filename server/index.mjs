@@ -3033,13 +3033,16 @@ async function finalizeArenaMatchIfReady(matchCode) {
     const humanResultRow = humanUserId ? resultsQ.rows.find((r) => Number(r.user_id) === humanUserId) : null;
     const botResultRow = botUserId ? resultsQ.rows.find((r) => Number(r.user_id) === botUserId) : null;
     const bothSubmitted = resultsQ.rows.length === 2;
-    // Bot pre-simulated result is "due" when it actually finished AND its virtual time is past
-    const botResultDue = botResultRow && botResultRow.did_finish && botResultRow.submitted_at
-      ? new Date(botResultRow.submitted_at) <= new Date()
+    const matchStartMs = new Date(match.start_at).getTime();
+    // Bot result is "due" when match has passed the bot's virtual finish time
+    const botResultDue = botResultRow && botResultRow.did_finish
+      ? matchStartMs + Number(botResultRow.elapsed_seconds) * 1000 <= Date.now()
       : false;
-    // Match can finalize early only if bot actually won (finished before human submitted)
+    // Match can finalize early only if bot finished and human hasn't submitted yet
     const botWonEarly = !!botUserId && botResultDue && !humanResultRow;
-    const timedOut = new Date(match.start_at).getTime() + match.timeout_seconds * 1000 < Date.now();
+    const timedOut = matchStartMs + Number(match.timeout_seconds) * 1000 < Date.now();
+
+    console.log(`[ARENA][finalize] ${matchCode} botUserId=${botUserId} humanUserId=${humanUserId} results=${resultsQ.rows.length} bothSubmitted=${bothSubmitted} botResultDue=${botResultDue} botWonEarly=${botWonEarly} timedOut=${timedOut} botFinish=${botResultRow?.did_finish} botElapsed=${botResultRow?.elapsed_seconds} startMs=${matchStartMs} now=${Date.now()}`);
 
     if (!bothSubmitted && !botWonEarly && !timedOut) { await client.query('COMMIT'); return; }
 
