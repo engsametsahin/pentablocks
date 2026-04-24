@@ -4243,10 +4243,10 @@ export default function App() {
         const updated = await fetchArenaMatch(arenaMatch.code);
         if (!active) return;
         setArenaMatch(updated);
-        // Opponent finished while we're still playing — go to result immediately.
-        // Use functional setter to read current arenaPhase (avoids stale closure).
+        // Opponent finished while we're still playing — end the game and show result.
         if (updated.status === 'finished' || updated.status === 'aborted') {
           setIsActive(false);
+          setIsGameOver(true);
           setArenaPhase((prev) => (prev === 'playing' ? 'result' : prev));
         }
       } catch { /* ignore */ }
