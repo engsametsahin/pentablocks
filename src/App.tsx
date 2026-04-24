@@ -4243,22 +4243,16 @@ export default function App() {
         const updated = await fetchArenaMatch(arenaMatch.code);
         if (!active) return;
         setArenaMatch(updated);
+        // Opponent finished while we're still playing — go to result immediately.
+        // Use functional setter to read current arenaPhase (avoids stale closure).
+        if (updated.status === 'finished' || updated.status === 'aborted') {
+          setIsActive(false);
+          setArenaPhase((prev) => (prev === 'playing' ? 'result' : prev));
+        }
       } catch { /* ignore */ }
     }, 3000);
     return () => { active = false; window.clearInterval(interval); };
   }, [gameMode, arenaMatch]);
-
-  // Arena: when opponent finishes first (match becomes 'finished' while we're still playing),
-  // immediately end the game and show the result screen.
-  useEffect(() => {
-    if (gameMode !== 'arena' || !arenaMatch) return;
-    if (arenaPhase !== 'playing') return;
-    if (arenaMatch.status !== 'finished' && arenaMatch.status !== 'aborted') return;
-
-    // Match ended externally — stop the game and go to result
-    setIsActive(false);
-    setArenaPhase('result');
-  }, [gameMode, arenaMatch, arenaPhase]);
 
   // Load arena profile when entering arena screen
   useEffect(() => {
