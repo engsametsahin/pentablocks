@@ -16,6 +16,21 @@
         margin: 0 auto;
         padding: 32px 20px 48px;
       }
+      .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 18px;
+      }
+      .links a {
+        text-decoration: none;
+        font-size: 13px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid #d3d3d3;
+        background: #ffffff;
+        color: #1f1f1f;
+      }
       h1 { margin-top: 0; }
       section { margin-top: 24px; }
       p, li { line-height: 1.6; }
@@ -28,8 +43,15 @@
   </head>
   <body>
     <main>
+      <div class="links">
+        <a href="/">Play Game</a>
+        <a href="/about.html">About</a>
+        <a href="/contact.html">Contact</a>
+        <a href="/terms.html">Terms</a>
+        <a href="/faq.html">FAQ</a>
+      </div>
       <h1>PentaBlocks Privacy Policy</h1>
-      <p>Last updated: 2026-04-08</p>
+      <p>Last updated: 2026-05-16</p>
 
       <section>
         <h2>What We Store</h2>
@@ -43,7 +65,8 @@
         <h2>Analytics</h2>
         <p>
           PentaBlocks may collect basic analytics events such as session start, level start, level completion,
-          and game flow interactions to improve gameplay and product quality.
+          game mode activity, and error diagnostics. These events help us improve gameplay quality, balance,
+          and reliability across desktop and mobile devices.
         </p>
       </section>
 
@@ -64,9 +87,26 @@
       </section>
 
       <section>
+        <h2>Account Data</h2>
+        <p>
+          When you create an account (guest, nickname, Google, or email-based login), we may store profile details,
+          progression, best times, multiplayer stats, and session tokens needed for authentication and continuity.
+        </p>
+      </section>
+
+      <section>
+        <h2>Security</h2>
+        <p>
+          We use secure transport (HTTPS) and server-side controls to protect account and gameplay data.
+          No internet service can be guaranteed 100 percent secure, but we continuously improve safeguards.
+        </p>
+      </section>
+
+      <section>
         <h2>Contact</h2>
         <p>
-          For policy questions, contact the project owner through the official distribution channel where PentaBlocks is published.
+          For privacy or policy questions, contact:
+          <code>legal@pentablocks.live</code>
         </p>
       </section>
     </main>

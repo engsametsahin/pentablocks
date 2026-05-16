@@ -1260,6 +1260,28 @@ function MenuScreen({
       >
         A Game by TGS LABS
       </motion.p>
+
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.6 }}
+        className={cn(
+          'mt-4 text-[11px] font-semibold flex flex-wrap items-center justify-center gap-x-3 gap-y-1',
+          resolvedTheme === 'dark' ? 'text-gray-500' : 'text-gray-600',
+        )}
+      >
+        <a href="/how-to-play.html" target="_blank" rel="noreferrer" className="hover:underline">How to Play</a>
+        <span className="opacity-50">•</span>
+        <a href="/strategy-basics.html" target="_blank" rel="noreferrer" className="hover:underline">Strategy</a>
+        <span className="opacity-50">•</span>
+        <a href="/arena-guide.html" target="_blank" rel="noreferrer" className="hover:underline">Arena Guide</a>
+        <span className="opacity-50">•</span>
+        <a href="/faq.html" target="_blank" rel="noreferrer" className="hover:underline">FAQ</a>
+        <span className="opacity-50">•</span>
+        <a href="/privacy.html" target="_blank" rel="noreferrer" className="hover:underline">Privacy</a>
+        <span className="opacity-50">•</span>
+        <a href="/terms.html" target="_blank" rel="noreferrer" className="hover:underline">Terms</a>
+      </motion.div>
     </div>
   );
 }
