@@ -1020,9 +1020,9 @@ function readThemeMode(): ThemeMode {
   try {
     const saved = localStorage.getItem(THEME_MODE_KEY);
     if (saved === 'dark' || saved === 'light' || saved === 'auto') return saved;
-    return 'dark';
+    return 'light';
   } catch {
-    return 'dark';
+    return 'light';
   }
 }
 
