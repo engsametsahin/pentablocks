@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "PentaBlocks Mobile",
+    "slug": "pentablocks-mobile",
+    "scheme": "pentablocks",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#050d1b"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pentablocks.app"
+    },
+    "android": {
+      "package": "com.pentablocks.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#050d1b"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ]
+    ]
+  }
+}

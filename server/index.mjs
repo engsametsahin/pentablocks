@@ -12,8 +12,16 @@ const API_PORT = Number(process.env.API_PORT ?? 8787);
 const APP_ORIGIN = process.env.APP_ORIGIN ?? 'http://localhost:3020';
 const APP_ORIGINS = process.env.APP_ORIGINS ?? '';
 const APP_PUBLIC_URL = process.env.APP_PUBLIC_URL ?? APP_ORIGIN;
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID ?? '';
+const GOOGLE_CLIENT_IDS = Array.from(new Set([
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.VITE_GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_ANDROID_CLIENT_ID,
+  process.env.GOOGLE_IOS_CLIENT_ID,
+  ...(process.env.GOOGLE_CLIENT_IDS ?? '').split(','),
+].map((value) => value?.trim()).filter(Boolean)));
+const GOOGLE_CLIENT_ID = GOOGLE_CLIENT_IDS[0] ?? '';
 const SESSION_COOKIE = 'pb_session';
+const NATIVE_CLIENT_HEADER = 'x-pentablocks-client';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const EMAIL_VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24;
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
@@ -109,7 +117,7 @@ function corsHeaders(req, res) {
   res.header('Vary', 'Origin');
   res.header('Access-Control-Allow-Origin', allowOrigin);
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-PentaBlocks-Client');
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
 }
 
@@ -127,6 +135,30 @@ function sessionCookieValue(req) {
   if (!raw) return null;
   const parsed = parseCookie(raw);
   return parsed[SESSION_COOKIE] ?? null;
+}
+
+function bearerTokenValue(req) {
+  const authorization = req.headers.authorization;
+  if (typeof authorization !== 'string') return null;
+  const match = authorization.match(/^Bearer\s+([a-f0-9]{64})$/i);
+  return match?.[1] ?? null;
+}
+
+function sessionTokenValue(req) {
+  return bearerTokenValue(req) ?? sessionCookieValue(req);
+}
+
+function isNativeClient(req) {
+  const client = req.headers[NATIVE_CLIENT_HEADER];
+  return typeof client === 'string' && ['android', 'ios'].includes(client.toLowerCase());
+}
+
+function authResponse(req, user, token, extra = {}) {
+  return {
+    user: toUserDto(user),
+    ...extra,
+    ...(isNativeClient(req) ? { sessionToken: token } : {}),
+  };
 }
 
 function setSessionCookie(res, token) {
@@ -996,7 +1028,7 @@ async function createSession(userId) {
 }
 
 async function readAuthedUser(req) {
-  const token = sessionCookieValue(req);
+  const token = sessionTokenValue(req);
   if (!token) return null;
 
   const query = await pool.query(
@@ -1047,7 +1079,7 @@ app.post('/api/auth/guest', async (req, res) => {
     const user = created.rows[0];
     const token = await createSession(user.id);
     setSessionCookie(res, token);
-    res.status(201).json({ user: toUserDto(user) });
+    res.status(201).json(authResponse(req, user, token));
   } catch (error) {
     console.error('guest auth error', error);
     res.status(500).json({ error: 'guest_auth_failed' });
@@ -1069,7 +1101,7 @@ app.post('/api/auth/google', async (req, res) => {
   try {
     const ticket = await oauthClient.verifyIdToken({
       idToken,
-      audience: GOOGLE_CLIENT_ID,
+      audience: GOOGLE_CLIENT_IDS,
     });
     const payload = ticket.getPayload();
     if (!payload?.sub) {
@@ -1100,7 +1132,7 @@ app.post('/api/auth/google', async (req, res) => {
     const user = upsert.rows[0];
     const token = await createSession(user.id);
     setSessionCookie(res, token);
-    res.json({ user: toUserDto(user) });
+    res.json(authResponse(req, user, token));
   } catch (error) {
     console.error('google auth error', error);
     res.status(401).json({ error: 'google_auth_failed' });
@@ -1151,7 +1183,7 @@ app.post('/api/auth/nickname/register', async (req, res) => {
 
     const token = await createSession(user.id);
     setSessionCookie(res, token);
-    res.status(201).json({ user: toUserDto(user) });
+    res.status(201).json(authResponse(req, user, token));
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('nickname register error', error);
@@ -1192,7 +1224,7 @@ app.post('/api/auth/nickname/login', async (req, res) => {
 
     const token = await createSession(row.id);
     setSessionCookie(res, token);
-    res.json({ user: toUserDto(row) });
+    res.json(authResponse(req, row, token));
   } catch (error) {
     console.error('nickname login error', error);
     res.status(500).json({ error: 'nickname_login_failed' });
@@ -1254,7 +1286,7 @@ app.post('/api/auth/email/register', async (req, res) => {
 
     const token = await createSession(user.id);
     setSessionCookie(res, token);
-    res.status(201).json({ user: toUserDto(user), verificationEmailSent: true });
+    res.status(201).json(authResponse(req, user, token, { verificationEmailSent: true }));
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('email register error', error);
@@ -1295,7 +1327,7 @@ app.post('/api/auth/email/login', async (req, res) => {
 
     const token = await createSession(row.id);
     setSessionCookie(res, token);
-    res.json({ user: toUserDto(row) });
+    res.json(authResponse(req, row, token));
   } catch (error) {
     console.error('email login error', error);
     res.status(500).json({ error: 'email_login_failed' });
@@ -1442,7 +1474,7 @@ app.put('/api/auth/guest/nickname', async (req, res) => {
 });
 
 app.post('/api/auth/logout', async (req, res) => {
-  const token = sessionCookieValue(req);
+  const token = sessionTokenValue(req);
   if (token) {
     await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
   }
