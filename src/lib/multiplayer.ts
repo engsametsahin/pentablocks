@@ -97,7 +97,7 @@ export interface MultiplayerRoom {
   id: number;
   code: string;
   levelId: number;
-  difficulty: 'easy' | 'moderate' | 'hard' | 'very_hard';
+  difficulty: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'extreme';
   totalRounds: number;
   maxPlayers: number;
   isRanked: boolean;
@@ -200,7 +200,7 @@ export async function fetchMultiplayerStats() {
 }
 
 export async function createMultiplayerRoom(payload: {
-  difficulty: 'easy' | 'moderate' | 'hard' | 'very_hard';
+  difficulty: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'extreme';
   totalRounds: number;
   maxPlayers?: number;
 }) {

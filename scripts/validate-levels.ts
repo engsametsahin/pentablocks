@@ -128,8 +128,60 @@ const broken: Array<{ id: number; w: number; h: number; combo: string }> = [];
 const dupes: Array<{ id: number; prev: number; key: string }> = [];
 const cellMismatch: Array<{ id: number; w: number; h: number; cells: number }> = [];
 const limitViolations: Array<{ id: number; combo: string }> = [];
+const geometryViolations: Array<{ id: number; w: number; h: number }> = [];
+const blockedViolations: Array<{ id: number; reason: string }> = [];
+const aspectWarnings: Array<{ id: number; w: number; h: number; ratio: number }> = [];
 const lowVariety: Array<{ id: number; combos: number; isError: boolean }> = [];
 const seen = new Map<string, number>();
+
+function blockedMaskKey(blocked: [number, number][] | undefined) {
+  return [...(blocked ?? [])]
+    .sort(([rowA, colA], [rowB, colB]) => rowA - rowB || colA - colB)
+    .map(([row, col]) => `${row}:${col}`)
+    .join('|');
+}
+
+function validateBlockedMask(id: number, w: number, h: number, blocked: [number, number][] | undefined) {
+  if (!blocked?.length) return;
+
+  const keys = new Set<string>();
+  for (const [row, col] of blocked) {
+    if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || row >= h || col < 0 || col >= w) {
+      blockedViolations.push({ id, reason: `out-of-bounds cell ${row}:${col} for ${w}x${h}` });
+      continue;
+    }
+    const key = `${row}:${col}`;
+    if (keys.has(key)) blockedViolations.push({ id, reason: `duplicate blocked cell ${key}` });
+    keys.add(key);
+  }
+
+  const openCells: Array<[number, number]> = [];
+  for (let row = 0; row < h; row += 1) {
+    for (let col = 0; col < w; col += 1) {
+      if (!keys.has(`${row}:${col}`)) openCells.push([row, col]);
+    }
+  }
+  if (openCells.length === 0) {
+    blockedViolations.push({ id, reason: 'mask blocks the entire board' });
+    return;
+  }
+
+  const visited = new Set<string>();
+  const queue: Array<[number, number]> = [openCells[0]];
+  while (queue.length > 0) {
+    const [row, col] = queue.shift()!;
+    const key = `${row}:${col}`;
+    if (visited.has(key) || keys.has(key) || row < 0 || row >= h || col < 0 || col >= w) continue;
+    visited.add(key);
+    queue.push([row - 1, col], [row + 1, col], [row, col - 1], [row, col + 1]);
+  }
+  if (visited.size !== openCells.length) {
+    blockedViolations.push({
+      id,
+      reason: `mask splits the board into disconnected regions (${visited.size}/${openCells.length} connected)`,
+    });
+  }
+}
 
 LEVEL_DATA.forEach((row, i) => {
   const [w, h, p4, p3, p2, p1] = row;
@@ -137,7 +189,7 @@ LEVEL_DATA.forEach((row, i) => {
   const p5 = LEVEL_P5[id] ?? 0;
   const blocked = LEVEL_BLOCKED[id] as [number, number][] | undefined;
   const blockedCount = blocked ? blocked.length : 0;
-  const key = `${w},${h},${p4},${p3},${p2},${p1},${p5},${blockedCount}`;
+  const key = `${w},${h},${p4},${p3},${p2},${p1},${p5},${blockedMaskKey(blocked)}`;
   const combo = `(${p4},${p3},${p2},${p1},p5=${p5})`;
 
   if (seen.has(key)) dupes.push({ id, prev: seen.get(key)!, key });
@@ -150,6 +202,13 @@ LEVEL_DATA.forEach((row, i) => {
   if (p4 > 7 || p3 > 2 || p2 > 1 || p1 > 1 || p5 > 12 || p4 < 0 || p3 < 0 || p2 < 0 || p1 < 0 || p5 < 0) {
     limitViolations.push({ id, combo });
   }
+
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 2 || h < 2 || w > 8 || h > 8) {
+    geometryViolations.push({ id, w, h });
+  }
+  const aspectRatio = Math.max(w, h) / Math.min(w, h);
+  if (id > 13 && aspectRatio > 2.5) aspectWarnings.push({ id, w, h, ratio: aspectRatio });
+  validateBlockedMask(id, w, h, blocked);
 
   const n = countSolvable(w, h, p4, p3, p2, p1, p5, blocked);
   if (n === 0) {
@@ -179,11 +238,25 @@ if (limitViolations.length) {
   limitViolations.forEach((v) => console.error(`  L${v.id}: ${v.combo}`));
 }
 
+if (geometryViolations.length) {
+  console.error('\nGEOMETRY VIOLATIONS (both axes must be 2..8):');
+  geometryViolations.forEach((v) => console.error(`  L${v.id}: ${v.w}x${v.h}`));
+}
+if (blockedViolations.length) {
+  console.error('\nBLOCKED MASK VIOLATIONS:');
+  blockedViolations.forEach((v) => console.error(`  L${v.id}: ${v.reason}`));
+}
+if (aspectWarnings.length) {
+  console.warn('\nASPECT RATIO WARNINGS (preferred <=2.5 after tutorial levels):');
+  aspectWarnings.forEach((v) => console.warn(`  L${v.id}: ${v.w}x${v.h} (${v.ratio.toFixed(2)}:1)`));
+}
+
 const varietyErrors = lowVariety.filter((v) => v.isError);
 const varietyWarnings = lowVariety.filter((v) => !v.isError);
 
 console.log(`\nTotal levels: ${LEVEL_DATA.length}`);
 console.log(`Unsolvable: ${broken.length} | Duplicates: ${dupes.length} | Cell mismatches: ${cellMismatch.length} | Limit violations: ${limitViolations.length}`);
+console.log(`Geometry violations: ${geometryViolations.length} | Blocked-mask violations: ${blockedViolations.length} | Aspect warnings: ${aspectWarnings.length}`);
 console.log(`Low-variety errors (L41+, <${MIN_COMBOS_ERROR} combos): ${varietyErrors.length} | warnings (L1-40, <${MIN_COMBOS_WARN} combos): ${varietyWarnings.length}`);
 
 if (REPORT) {
@@ -205,7 +278,8 @@ if (REPORT) {
   console.log(`Average per level: ${(totalCombos / LEVEL_DATA.length).toFixed(1)}`);
 }
 
-const failures = broken.length + dupes.length + cellMismatch.length + limitViolations.length + varietyErrors.length;
+const failures = broken.length + dupes.length + cellMismatch.length + limitViolations.length
+  + geometryViolations.length + blockedViolations.length + varietyErrors.length;
 if (failures > 0) {
   console.error(`\n✗ Level validation failed (${failures} issue${failures === 1 ? '' : 's'}).`);
   process.exit(1);

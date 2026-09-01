@@ -45,10 +45,11 @@ const ROOM_ROUND_TIMEOUT_SECONDS = 240;
 const ROOM_DEFAULT_MAX_PLAYERS = 8;
 const ROOM_MIN_PLAYERS_TO_START = 2;
 const ROOM_DIFFICULTY_START_LEVELS = {
-  easy: 10,
-  moderate: 30,
-  hard: 60,
-  very_hard: 85,
+  easy: 1,
+  moderate: 11,
+  hard: 31,
+  very_hard: 61,
+  extreme: 81,
 };
 const SMTP_HOST = process.env.SMTP_HOST ?? '';
 const SMTP_PORT = Number(process.env.SMTP_PORT ?? 587);
@@ -2534,22 +2535,22 @@ function pickRange(min, max) {
 
 /**
  * Rating-based level selection for arena matches.
- *   Bronze      0–1099  → LV  1–15
- *   Silver   1100–1299  → LV 16–30
- *   Gold     1300–1499  → LV 31–45
- *   Platinum 1500–1699  → LV 46–60
- *   Diamond  1700–1899  → LV 61–75
- *   Master   1900–2099  → LV 76–85
- *   Grandmaster  2100+  → LV 86–100
+ *   Bronze      0–1099  → LV  1–10 (Easy)
+ *   Silver   1100–1299  → LV 11–20 (Moderate I)
+ *   Gold     1300–1499  → LV 21–30 (Moderate II)
+ *   Platinum 1500–1699  → LV 31–45 (Hard I)
+ *   Diamond  1700–1899  → LV 46–60 (Hard II)
+ *   Master   1900–2099  → LV 61–80 (Very Hard)
+ *   Grandmaster  2100+  → LV 81–100 (Extreme)
  */
 function arenaLevelForRating(avgRating) {
-  if (avgRating < 1100) return pickRange(1, 15);
-  if (avgRating < 1300) return pickRange(16, 30);
-  if (avgRating < 1500) return pickRange(31, 45);
-  if (avgRating < 1700) return pickRange(46, 60);
-  if (avgRating < 1900) return pickRange(61, 75);
-  if (avgRating < 2100) return pickRange(76, 85);
-  return pickRange(86, 100);
+  if (avgRating < 1100) return pickRange(1, 10);
+  if (avgRating < 1300) return pickRange(11, 20);
+  if (avgRating < 1500) return pickRange(21, 30);
+  if (avgRating < 1700) return pickRange(31, 45);
+  if (avgRating < 1900) return pickRange(46, 60);
+  if (avgRating < 2100) return pickRange(61, 80);
+  return pickRange(81, 100);
 }
 
 function clampNumber(value, min, max) {

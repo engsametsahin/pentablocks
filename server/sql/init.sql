@@ -261,7 +261,7 @@ END $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
     SELECT 1
     FROM pg_constraint con
     JOIN pg_class rel ON rel.oid = con.conrelid
@@ -270,9 +270,12 @@ BEGIN
       AND nsp.nspname = current_schema()
       AND con.conname = 'multiplayer_rooms_difficulty_check'
   ) THEN
-    ALTER TABLE multiplayer_rooms
-      ADD CONSTRAINT multiplayer_rooms_difficulty_check CHECK (difficulty IN ('easy', 'moderate', 'hard', 'very_hard'));
+    ALTER TABLE multiplayer_rooms DROP CONSTRAINT multiplayer_rooms_difficulty_check;
   END IF;
+
+  ALTER TABLE multiplayer_rooms
+    ADD CONSTRAINT multiplayer_rooms_difficulty_check
+    CHECK (difficulty IN ('easy', 'moderate', 'hard', 'very_hard', 'extreme'));
 END $$;
 
 CREATE INDEX IF NOT EXISTS multiplayer_rooms_status_idx

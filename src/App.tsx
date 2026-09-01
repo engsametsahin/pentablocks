@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { RotateCw, FlipHorizontal, RefreshCw, Trophy, Timer, ChevronRight, ChevronLeft, Lock, Users, User, Star, BarChart3, Target, Zap, Medal, Link2, Copy, Swords, Shield, TrendingUp, Clock, ChevronUp, ChevronDown, Minus } from 'lucide-react';
 import { ALL_PIECES, PENTOMINOES, Piece, Point, rotateShape, flipShape } from './constants';
 import { LEVEL_DATA, LEVEL_P5, LEVEL_BLOCKED } from './level-data';
+import { generateCanonicalChallengePuzzle } from './challenge-puzzle';
 import {
   fetchArenaProfile, joinArenaQueue, leaveArenaQueue, pollArenaQueueStatus,
   fetchArenaMatch, submitArenaMatchResult,
@@ -50,7 +51,7 @@ const LOCAL_LAST_LEVEL_KEY = 'katamino-last-level';
 const RECENT_PUZZLE_HISTORY_KEY = 'pentablocks-recent-puzzles';
 const RECENT_PUZZLE_HISTORY_LIMIT = 36;
 const MOBILE_CONTROLS_HINT_SEEN_KEY = 'pentablocks-mobile-controls-hint-seen';
-const PRECOMPUTED_POOL_SIZE = 12;
+const PRECOMPUTED_POOL_SIZE = 24;
 const PRECOMPUTED_POOL_SOLVED_TARGET = 24;
 const PRECOMPUTED_POOL_MAX_ATTEMPTS = 520;
 const THEME_MODE_KEY = 'pentablocks-theme-mode';
@@ -72,7 +73,7 @@ function getResponsiveCellSize(viewportWidth: number) {
 
 type Screen = 'menu' | 'levelSelect' | 'game' | 'stats' | 'multiplayer' | 'profile' | 'admin' | 'arena';
 type GameMode = 'single' | 'multiplayer' | 'arena';
-type RoomDifficulty = 'easy' | 'moderate' | 'hard' | 'very_hard';
+type RoomDifficulty = 'easy' | 'moderate' | 'hard' | 'very_hard' | 'extreme';
 type ThemeMode = 'dark' | 'light' | 'auto';
 
 type LevelFilter = 'all' | 'unlocked' | 'completed';
@@ -182,10 +183,11 @@ const ROOM_DIFFICULTY_OPTIONS: Array<{
   label: string;
   startLevel: number;
 }> = [
-  { value: 'easy', label: 'Easy', startLevel: 10 },
-  { value: 'moderate', label: 'Moderate', startLevel: 30 },
-  { value: 'hard', label: 'Hard', startLevel: 60 },
-  { value: 'very_hard', label: 'Very Hard', startLevel: 85 },
+  { value: 'easy', label: 'Easy', startLevel: 1 },
+  { value: 'moderate', label: 'Moderate', startLevel: 11 },
+  { value: 'hard', label: 'Hard', startLevel: 31 },
+  { value: 'very_hard', label: 'Very Hard', startLevel: 61 },
+  { value: 'extreme', label: 'Extreme', startLevel: 81 },
 ];
 
 // ─── 100 Unique Levels ───────────────────────────────────────────────────────
@@ -505,7 +507,12 @@ function cloneSolvablePoolEntry(entry: SolvablePoolEntry): SolvablePoolEntry {
 
 function buildPuzzleFingerprint(cfg: LevelConfig, pieces: Piece[]) {
   const sortedIds = pieces.map((piece) => piece.id).sort().join(',');
-  return `${cfg.id}:${sortedIds}`;
+  const board = getBoardDimensions(cfg);
+  const blockedMask = [...cfg.blockedCells]
+    .sort(([rowA, colA], [rowB, colB]) => rowA - rowB || colA - colB)
+    .map(([row, col]) => `${row}:${col}`)
+    .join('|');
+  return `${cfg.id}:${board.width}x${board.height}:${blockedMask}:${sortedIds}`;
 }
 
 function normalizeRecentPuzzleFingerprints(input: unknown) {
@@ -586,12 +593,10 @@ function estimateTargetDifficulty(cfg: LevelConfig) {
 }
 
 function scoreSolvedCandidate(cfg: LevelConfig, pieces: Piece[], searchNodes: number, deadRegionPrunes: number) {
-  const board = getBoardDimensions(cfg);
-  const aspectPenalty = Math.abs(board.width - board.height) * 0.12;
   const pieceMixScore = scorePieceMix(pieces) * 1.35;
   const searchScore = Math.log10(searchNodes + 1) * 8.5;
   const pruneScore = Math.log10(deadRegionPrunes + 1) * 4.2;
-  return pieceMixScore + searchScore + pruneScore + aspectPenalty;
+  return pieceMixScore + searchScore + pruneScore;
 }
 
 function getPrecomputedLevelPool(cfg: LevelConfig) {
@@ -671,7 +676,7 @@ function pickPoolCandidate(
     }
     return a.fingerprint.localeCompare(b.fingerprint);
   });
-  const topBand = sorted.slice(0, Math.min(6, sorted.length));
+  const topBand = sorted.slice(0, Math.min(12, sorted.length));
   if (topBand.length === 0) return null;
   const picker = options?.seed
     ? createSeededRng(`pool-pick:${cfg.id}:${options.seed}`)
@@ -898,21 +903,26 @@ function generateChallengePieces(
     batchCount?: number;
   },
 ): PuzzleSelectionResult {
-  const poolSize = getPrecomputedLevelPool(cfg).length;
-  const challengeFromPool = pickPoolCandidate(cfg, {
-    seed,
-    allowRecentFallback: true,
-    recentHistorySize: 0,
-  });
-  if (challengeFromPool) return challengeFromPool;
-  return findSolvablePieceSet(cfg, {
-    cacheKey: `challenge:${cfg.id}:${seed}`,
-    seed,
-    attemptsPerBatch: options?.attemptsPerBatch ?? 160,
-    batchCount: options?.batchCount ?? 10,
-    poolSize,
-    recentHistorySize: 0,
-  });
+  void options;
+  const canonical = generateCanonicalChallengePuzzle(cfg.id, seed);
+  if (!canonical) {
+    throw new Error(`Unable to generate canonical challenge puzzle for level ${cfg.id}.`);
+  }
+  return {
+    entry: {
+      pieces: clonePieceSet(canonical.pieces),
+      fingerprint: canonical.fingerprint,
+      difficultyScore: 0,
+      distanceToTarget: 0,
+    },
+    telemetry: {
+      source: 'pool',
+      attemptsUsed: 0,
+      solvedCandidates: 1,
+      poolSize: canonical.candidatePoolSize,
+      recentHistorySize: 0,
+    },
+  };
 }
 
 function selectSinglePlayerPuzzle(
@@ -926,6 +936,43 @@ function selectSinglePlayerPuzzle(
   },
 ): PuzzleSelectionResult {
   const recentFingerprints = new Set(recentHistory);
+  let firstCanonical: PuzzleSelectionResult | null = null;
+
+  // Keep web and native on the same validated pool, geometry and difficulty
+  // rules. Fresh entropy avoids recently played variants where possible.
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const seed = [
+      'web-single',
+      cfg.id,
+      Date.now(),
+      attempt,
+      Math.random().toString(36).slice(2),
+    ].join(':');
+    const canonical = generateCanonicalChallengePuzzle(cfg.id, seed);
+    if (!canonical) continue;
+
+    const result: PuzzleSelectionResult = {
+      entry: {
+        pieces: clonePieceSet(canonical.pieces),
+        fingerprint: canonical.fingerprint,
+        difficultyScore: 0,
+        distanceToTarget: 0,
+      },
+      telemetry: {
+        source: 'pool',
+        attemptsUsed: attempt + 1,
+        solvedCandidates: 1,
+        poolSize: canonical.candidatePoolSize,
+        recentHistorySize: recentHistory.length,
+      },
+    };
+    firstCanonical ??= result;
+    if (!recentFingerprints.has(canonical.fingerprint)) return result;
+  }
+
+  if (firstCanonical) return firstCanonical;
+
+  // Defensive fallback for an invalid or unexpectedly empty canonical pool.
   const poolSize = getPrecomputedLevelPool(cfg).length;
 
   // 1) Pool pick (fast, precomputed)
@@ -1146,6 +1193,87 @@ function ThemePicker({
 }
 
 // ─── Menu Screen ──────────────────────────────────────────────────────────────
+const BRAND_LETTERS = [
+  { letter: 'B', color: '#ff9f1a' },
+  { letter: 'L', color: '#ff3b68' },
+  { letter: 'O', color: '#b43cff' },
+  { letter: 'C', color: '#18bfff' },
+  { letter: 'K', color: '#04d76a' },
+  { letter: 'S', color: '#ffd21a' },
+] as const;
+
+function PentaBlocksLogo({
+  resolvedTheme,
+  size = 'hero',
+}: {
+  resolvedTheme: 'dark' | 'light';
+  size?: 'hero' | 'compact';
+}) {
+  const isHero = size === 'hero';
+  const outlineWidth = isHero ? 2.4 : 1.4;
+
+  return (
+    <div
+      role="img"
+      aria-label="PentaBlocks"
+      className={cn(
+        'inline-flex max-w-full items-center justify-center select-none',
+        isHero ? 'flex-col gap-3 md:gap-4' : 'flex-row gap-2 md:gap-3',
+      )}
+    >
+      <img
+        src="/pentablocks-logo.png"
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className={cn(
+          'shrink-0 object-contain drop-shadow-[0_8px_22px_rgba(0,180,255,0.22)]',
+          isHero ? 'h-24 w-24 md:h-32 md:w-32' : 'h-10 w-10 md:h-12 md:w-12',
+        )}
+      />
+      <span
+        aria-hidden="true"
+        className={cn(
+          'inline-flex whitespace-nowrap font-black leading-none',
+          isHero
+            ? 'text-[clamp(1.8rem,9.5vw,6rem)] tracking-[-0.07em]'
+            : 'text-2xl md:text-4xl tracking-[-0.055em]',
+        )}
+      >
+        <span
+          style={{
+            color: '#ffffff',
+            WebkitTextStroke: `${outlineWidth}px ${resolvedTheme === 'dark' ? '#05070b' : '#17233a'}`,
+            paintOrder: 'stroke fill',
+            textShadow: resolvedTheme === 'dark'
+              ? '0 3px 7px rgba(0,0,0,0.55)'
+              : '0 2px 4px rgba(15,23,42,0.25)',
+          }}
+        >
+          PENTA
+        </span>
+        <span className="inline-flex">
+          {BRAND_LETTERS.map(({ letter, color }) => (
+            <span
+              key={letter}
+              style={{
+                color,
+                WebkitTextStroke: `${Math.max(1, outlineWidth * 0.55)}px ${resolvedTheme === 'dark' ? '#05070b' : '#17233a'}`,
+                paintOrder: 'stroke fill',
+                textShadow: resolvedTheme === 'dark'
+                  ? '0 3px 7px rgba(0,0,0,0.55)'
+                  : '0 2px 4px rgba(15,23,42,0.22)',
+              }}
+            >
+              {letter}
+            </span>
+          ))}
+        </span>
+      </span>
+    </div>
+  );
+}
+
 function MenuScreen({
   onSinglePlayer,
   onContinue,
@@ -1178,9 +1306,9 @@ function MenuScreen({
         transition={{ duration: 0.5 }}
         className="text-center mb-16"
       >
-        <h1 className="text-4xl sm:text-6xl md:text-8xl font-black tracking-tight md:tracking-tighter mb-3 select-none leading-none max-w-full">
-          PENTABLOCKS
-        </h1>
+        <div className="mb-3">
+          <PentaBlocksLogo resolvedTheme={resolvedTheme} />
+        </div>
         <p className={cn(
           'uppercase tracking-[0.3em] text-xs font-bold',
           resolvedTheme === 'dark' ? 'text-gray-500' : 'text-gray-600',
@@ -5019,7 +5147,7 @@ export default function App() {
     const activePiece = placedPieces.find((piece) => piece.id === pieceId) ?? availablePieces.find((piece) => piece.id === pieceId);
     if (!activePiece) return { clientX, clientY };
 
-    const shape = 'currentShape' in activePiece ? activePiece.currentShape : activePiece.shape;
+    const shape = (activePiece as Partial<PlacedPiece>).currentShape ?? activePiece.shape;
     const shapeSize = getShapeSize(shape);
     const pieceWidth = shapeSize.width * cellSize;
     const pieceHeight = shapeSize.height * cellSize;
@@ -5166,12 +5294,14 @@ export default function App() {
       handlePointerUp(dragStartRef.current?.pointerId ?? null);
     };
 
-    window.addEventListener('mouseup', handlePointerUp);
+    const onWindowMouseUp = () => handlePointerUp();
+
+    window.addEventListener('mouseup', onWindowMouseUp);
     window.addEventListener('touchmove', onWindowTouchMoveLegacy, { passive: false });
     window.addEventListener('touchend', onWindowTouchEnd);
     window.addEventListener('touchcancel', onWindowTouchEnd);
     return () => {
-      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('mouseup', onWindowMouseUp);
       window.removeEventListener('touchmove', onWindowTouchMoveLegacy);
       window.removeEventListener('touchend', onWindowTouchEnd);
       window.removeEventListener('touchcancel', onWindowTouchEnd);
@@ -5813,7 +5943,9 @@ export default function App() {
             <ChevronLeft size={20} />
           </button>
           <div>
-            <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-1">PENTABLOCKS</h1>
+            <div className="mb-1">
+              <PentaBlocksLogo resolvedTheme={resolvedTheme} size="compact" />
+            </div>
             <div className="flex items-center gap-2 mt-1">
               <span className={cn('text-white text-[10px] font-bold px-2 py-0.5 rounded-full', tier.dot)}>
                 LV.{level} {config.label.toUpperCase()}
