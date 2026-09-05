@@ -1216,21 +1216,8 @@ function PentaBlocksLogo({
     <div
       role="img"
       aria-label="PentaBlocks"
-      className={cn(
-        'inline-flex max-w-full items-center justify-center select-none',
-        isHero ? 'flex-col gap-3 md:gap-4' : 'flex-row gap-2 md:gap-3',
-      )}
+      className="inline-flex max-w-full items-center justify-center select-none"
     >
-      <img
-        src="/pentablocks-logo.png"
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        className={cn(
-          'shrink-0 object-contain drop-shadow-[0_8px_22px_rgba(0,180,255,0.22)]',
-          isHero ? 'h-24 w-24 md:h-32 md:w-32' : 'h-10 w-10 md:h-12 md:w-12',
-        )}
-      />
       <span
         aria-hidden="true"
         className={cn(
