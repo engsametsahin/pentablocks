@@ -39,6 +39,7 @@ export const LEVEL_BLOCKED: Record<number, [number, number][]> = {
   82: [[3, 3], [3, 4]],
   83: [[0, 3], [2, 0], [2, 6], [4, 2], [4, 4]],
   84: [[0, 0], [0, 5], [5, 0], [5, 5]],
+  85: [[0, 0]],
   89: [[0, 0], [0, 5], [3, 0], [3, 5]],
   97: [[0, 0], [3, 4]],
 };
@@ -92,12 +93,12 @@ export const LEVEL_DATA: LevelDataRow[] = [
   [8,4, 4,2,0,0, 42],   [8,4, 6,2,1,0, 40],
   [8,4, 6,2,0,0, 38],
   // ── Tier 9 — Legend (81-90): compact masks and speed-oriented boards ──
-  // L81-84 use irregular masks so difficulty comes from topology rather than excessive width.
+  // L81-85 use irregular masks so difficulty comes from topology rather than excessive width.
   [7,5, 6,2,0,0, 35],
   [8,4, 6,1,1,1, 32],
   [7,5, 6,1,1,1, 30],
   [6,6, 6,2,1,0, 28],
-  [6,2, 3,0,0,0, 38],   [6,2, 2,1,0,1, 35],
+  [6,5, 6,1,1,0, 38],   [6,2, 2,1,0,1, 35],
   [7,2, 3,0,1,0, 33],   [7,2, 2,2,0,0, 30],   [6,4, 4,1,0,1, 28],
   [8,2, 3,1,0,1, 26],
   // ── Tier 10 — Champion (91-100): unique combos + speedruns ──
