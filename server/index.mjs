@@ -437,20 +437,20 @@ function sanitizeRoomDifficulty(input) {
 
 function toChallengeDto(row) {
   return {
-    id: row.id,
+    id: Number(row.id),
     code: row.code,
     levelId: row.level_id,
     puzzleSeed: row.puzzle_seed,
     isRanked: row.is_ranked,
     status: row.status,
     startAt: row.start_at,
-    winnerUserId: row.winner_user_id,
+    winnerUserId: row.winner_user_id === null ? null : Number(row.winner_user_id),
     endedAt: row.ended_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
     creator: {
-      id: row.created_by_user_id,
+      id: Number(row.created_by_user_id),
       displayName: row.creator_display_name,
       provider: row.creator_provider,
     },
@@ -466,7 +466,7 @@ function toChallengePlayerDto(row) {
     ? (row.did_win ? 1 : 2)
     : null;
   return {
-    userId: row.user_id,
+    userId: Number(row.user_id),
     displayName: row.display_name,
     provider: row.provider,
     joinedAt: row.joined_at,
@@ -533,7 +533,7 @@ async function userIsChallengeParticipant(challengeId, userId) {
 
 function toRoomDto(row) {
   return {
-    id: row.id,
+    id: Number(row.id),
     code: row.code,
     levelId: row.level_id,
     difficulty: row.difficulty,
@@ -542,12 +542,12 @@ function toRoomDto(row) {
     isRanked: row.is_ranked,
     status: row.status,
     currentRound: row.current_round,
-    championUserId: row.champion_user_id,
+    championUserId: row.champion_user_id === null ? null : Number(row.champion_user_id),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
     host: {
-      id: row.created_by_user_id,
+      id: Number(row.created_by_user_id),
       displayName: row.host_display_name,
       provider: row.host_provider,
     },
@@ -556,7 +556,7 @@ function toRoomDto(row) {
 
 function toRoomPlayerDto(row) {
   return {
-    userId: row.user_id,
+    userId: Number(row.user_id),
     displayName: row.display_name,
     provider: row.provider,
     joinedAt: row.joined_at,
@@ -567,7 +567,7 @@ function toRoomPlayerDto(row) {
 
 function toRoomSubmissionDto(row) {
   return {
-    userId: row.user_id,
+    userId: Number(row.user_id),
     displayName: row.display_name,
     provider: row.provider,
     submittedAt: row.submitted_at,
@@ -582,7 +582,7 @@ function toRoomSubmissionDto(row) {
 function toRoomRoundDto(row, submissions) {
   if (!row) return null;
   return {
-    id: row.id,
+    id: Number(row.id),
     roundNumber: row.round_number,
     levelId: row.level_id,
     puzzleSeed: row.puzzle_seed,
@@ -1703,7 +1703,7 @@ app.get('/api/multiplayer/challenges/:code', async (req, res) => {
       res.status(404).json({ error: 'challenge_not_found' });
       return;
     }
-    const isParticipant = snapshot.players.some((player) => player.userId === user.id);
+    const isParticipant = snapshot.players.some((player) => player.userId === Number(user.id));
     res.json({ ...snapshot, viewer: { isParticipant } });
   } catch (error) {
     console.error('multiplayer read challenge error', error);
@@ -2064,7 +2064,7 @@ app.get('/api/multiplayer/rooms/:code', async (req, res) => {
       res.status(404).json({ error: 'room_not_found' });
       return;
     }
-    const isParticipant = snapshot.players.some((player) => player.userId === user.id);
+    const isParticipant = snapshot.players.some((player) => player.userId === Number(user.id));
     res.json({ ...snapshot, viewer: { isParticipant } });
   } catch (error) {
     console.error('multiplayer read room error', error);

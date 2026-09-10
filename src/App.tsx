@@ -2089,7 +2089,7 @@ function MultiplayerScreen({
   const readinessLabel = playerCount < readyTarget
     ? `Players ${playerCount}/${readyTarget}`
     : `Ready ${readyCount}/${readyTarget}`;
-  const isHost = Boolean(user && roomSnapshot && roomSnapshot.room.host.id === user.id);
+  const isHost = Boolean(user && roomSnapshot && Number(roomSnapshot.room.host.id) === Number(user.id));
   const isDark = resolvedTheme === 'dark';
 
   const canUseMultiplayer = Boolean(user);
@@ -2097,7 +2097,7 @@ function MultiplayerScreen({
   const launchChallengeIfStarted = useCallback(async (nextSnapshot: MultiplayerRoomSnapshot) => {
     const startAt = nextSnapshot.activeRound?.startAt ?? null;
     if (!startAt) return;
-    if (user && nextSnapshot.activeRound?.submissions.some((submission) => submission.userId === user.id)) return;
+    if (user && nextSnapshot.activeRound?.submissions.some((submission) => Number(submission.userId) === Number(user.id))) return;
     const launchKey = `${nextSnapshot.room.code}:${nextSnapshot.activeRound?.roundNumber ?? 0}:${startAt}`;
     if (launchedChallengeKeyRef.current === launchKey) return;
     launchedChallengeKeyRef.current = launchKey;
